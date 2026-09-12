@@ -291,6 +291,22 @@ if __name__ == "__main__":
         database.init_db()
         logger.info("Database initialized successfully")
 
+        # JFW-1 Ready-Handshake: strukturierte stdout-Zeile, die Tauri liest.
+        # Port/PID/Variante/Generation sind fuer den Caller bindend; das Bearer-Token
+        # wird NIE hier ausgegeben (nur per Umgebung uebergeben).
+        import json as _json
+
+        generation = os.environ.get("JFWHISPER_GENERATION", "0")
+        variant = os.environ.get("VOICEBOX_BACKEND_VARIANT", "cpu")
+        ready = {
+            "jfwhisper_ready": True,
+            "port": args.port,
+            "pid": os.getpid(),
+            "variant": variant,
+            "generation": generation,
+        }
+        print(_json.dumps(ready), flush=True)
+
         logger.info(f"Starting uvicorn server on {args.host}:{args.port}...")
         uvicorn.run(
             app,

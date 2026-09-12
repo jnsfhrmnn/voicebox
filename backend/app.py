@@ -68,50 +68,58 @@ def safe_content_disposition(disposition_type: str, filename: str) -> str:
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
-    from .mcp_server.server import build_mcp_server, compose_lifespan
-    from .mcp_server.context import ClientIdMiddleware
-
-    # Build the MCP app up-front so we can wire its lifespan into FastAPI's —
-    # FastMCP's Streamable HTTP transport only works if its session manager
-    # runs inside the parent ASGI lifespan.
-    mcp = build_mcp_server()
-    mcp_app = mcp.http_app(path="/", transport="http")
+    """Create and configure the JF Whisper API (Transkriptions-Produktprofil)."""
 
     @asynccontextmanager
-    async def voicebox_lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI):
         await _run_startup(app)
         try:
             yield
         finally:
-            # Paired with _run_startup via try/finally: runs whether or
-            # not the nested MCP lifespan entered cleanly, so a partial
-            # startup still unloads whatever models were loaded.
+            # Paired with _run_startup via try/finally, so a partial startup
+            # still unloads whatever models were loaded.
             await _run_shutdown()
 
-    # compose_lifespan enters factories in order (voicebox startup →
-    # MCP startup) and exits in LIFO (MCP teardown first → models
-    # unload last). That ordering matters on shutdown: FastMCP's
-    # __aexit__ cancels in-flight session tasks, and we want that to
-    # happen *before* _run_shutdown yanks the TTS / Whisper / LLM
-    # models out from under any MCP request that was still generating.
-    lifespan = compose_lifespan(voicebox_lifespan, mcp_app.router.lifespan_context)
-
     application = FastAPI(
-        title="voicebox API",
-        description="Production-quality Qwen3-TTS voice cloning API",
+        title="JF Whisper API",
+        description="Local transcription sidecar (Whisper STT) — JFW-1 Transkriptionsprofil",
         version=__version__,
         lifespan=lifespan,
     )
 
     _configure_cors(application)
-    application.add_middleware(ClientIdMiddleware)
     register_routers(application)
-    application.mount("/mcp", mcp_app)
-    logger.info("MCP: mounted at /mcp")
+    # MCP-Sidecar wird im Transkriptionsprofil nicht ausgeliefert (Profil: sidecars.forbidden).
     _mount_frontend(application)
+    _install_auth_middleware(application)
 
     return application
+
+
+def _install_auth_middleware(application: FastAPI) -> None:
+    """Bearer-Token-Authentifizierung fuer den internen Loopback-Sidecar.
+
+    Das Token wird pro Start von Tauri erzeugt und nur per Umgebung uebergeben
+    (JFWHISPER_API_TOKEN). Solange kein Token gesetzt ist, bleibt der Server
+    unauthentifiziert — das ist bewusst: die Isolation kommt dann aus dem
+    bindenden Loopback-Port. Sobald ein Token gesetzt ist, prueft jede Anfrage
+    auusser /health und /docs gegen den Bearer-Token (konstante Zeit).
+    """
+    import hmac
+    import os as _os
+
+    token = _os.environ.get("JFWHISPER_API_TOKEN", "")
+
+    @application.middleware("http")
+    async def auth_middleware(request, call_next):
+        if token and request.url.path not in ("/health", "/docs", "/openapi.json"):
+            provided = request.headers.get("authorization", "")
+            expected = "Bearer " + token
+            if not hmac.compare_digest(provided.encode(), expected.encode()):
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+        return await call_next(request)
 
 
 def _configure_cors(application: FastAPI) -> None:
@@ -272,9 +280,9 @@ async def _run_startup(application: FastAPI) -> None:
     if not _compatible:
         logger.warning("GPU COMPATIBILITY: %s", _cuda_warning)
 
-    from .services.cuda import check_and_update_cuda_binary
-
-    create_background_task(check_and_update_cuda_binary())
+    # JFW-1: Der Voicebox-CUDA-Download-/Auto-Updatepfad ist aus dem aktiven
+    # Produktprofil entfernt (Profil: fastapi_routers.forbidden enthält "cuda").
+    # Ein eigenes CUDA-Artefakt mit eigenem Ursprung liefert JFW-12.
 
     try:
         progress_manager = get_progress_manager()
