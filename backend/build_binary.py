@@ -1,5 +1,10 @@
 """
-PyInstaller build script for creating standalone Python server binary.
+PyInstaller build script for creating the standalone Python server binary.
+
+JFW-1 (jf-whisper-Profil): Transkriptions-Build — der Server bundelt nur den
+Whisper-STT-Kern (torch + transformers). Alle TTS-/LLM-Pakete (qwen_tts,
+chatterbox, kokoro, zipvoice, tada, hume) und der MCP-Server sind aus dem
+Profil ausgeschlossen und werden NICHT gebundlet.
 
 Usage:
     python build_binary.py           # Build default (CPU) server binary
@@ -68,20 +73,16 @@ def build_server(cuda=False):
             # PyInstaller. See pyi_rth_torch_compiler_disable.py.
             "--runtime-hook",
             "pyi_rth_torch_compiler_disable.py",
-            # Per-module collection overrides (e.g. forcing scipy.stats._distn_infrastructure
-            # to bundle .py source alongside .pyc so the runtime hook can source-patch it).
+            # Per-module collection overrides: transformers.masking_utils muss
+            # als .py-Quelle gebundlet werden, damit der Runtime-Hook es patchen
+            # kann (Whisper-Pfad); scipy.stats._distn_infrastructure analog fuer
+            # den librosa/STT-Audio-Pfad.
             "--additional-hooks-dir",
             "pyi_hooks",
         ]
     )
 
-    # Add local qwen_tts path if specified (for editable installs)
-    qwen_tts_path = os.getenv("QWEN_TTS_PATH")
-    if qwen_tts_path and Path(qwen_tts_path).exists():
-        args.extend(["--paths", str(qwen_tts_path)])
-        logger.info("Using local qwen_tts source from: %s", qwen_tts_path)
-
-    # Add common hidden imports
+    # Add common hidden imports — STT-Kern (Whisper) only.
     args.extend(
         [
             "--hidden-import",
@@ -95,12 +96,6 @@ def build_server(cuda=False):
             "--hidden-import",
             "backend.models",
             "--hidden-import",
-            "backend.services.profiles",
-            "--hidden-import",
-            "backend.services.history",
-            "--hidden-import",
-            "backend.services.tts",
-            "--hidden-import",
             "backend.services.transcribe",
             "--hidden-import",
             "backend.utils.platform_detect",
@@ -109,8 +104,6 @@ def build_server(cuda=False):
             "--hidden-import",
             "backend.backends.pytorch_backend",
             "--hidden-import",
-            "backend.backends.qwen_custom_voice_backend",
-            "--hidden-import",
             "backend.utils.audio",
             "--hidden-import",
             "backend.utils.cache",
@@ -118,41 +111,6 @@ def build_server(cuda=False):
             "backend.utils.progress",
             "--hidden-import",
             "backend.utils.hf_progress",
-            "--hidden-import",
-            "backend.services.cuda",
-            "--hidden-import",
-            "backend.services.effects",
-            "--hidden-import",
-            "backend.utils.effects",
-            "--hidden-import",
-            "backend.services.versions",
-            "--hidden-import",
-            "pedalboard",
-            "--hidden-import",
-            "chatterbox",
-            "--hidden-import",
-            "chatterbox.tts_turbo",
-            "--hidden-import",
-            "chatterbox.mtl_tts",
-            "--hidden-import",
-            "backend.backends.chatterbox_backend",
-            "--hidden-import",
-            "backend.backends.chatterbox_turbo_backend",
-            # chatterbox multilingual uses spacy_pkuseg for Chinese word
-            # segmentation, which ships pickled dict files (dicts/default.pkl)
-            # and native .so extensions that --hidden-import alone won't bundle.
-            "--collect-all",
-            "spacy_pkuseg",
-            "--hidden-import",
-            "backend.backends.luxtts_backend",
-            "--hidden-import",
-            "zipvoice",
-            "--hidden-import",
-            "zipvoice.luxvoice",
-            "--collect-all",
-            "zipvoice",
-            "--collect-all",
-            "linacodec",
             "--hidden-import",
             "torch",
             "--hidden-import",
@@ -173,20 +131,6 @@ def build_server(cuda=False):
             "librosa",
             "--hidden-import",
             "soundfile",
-            "--hidden-import",
-            "qwen_tts",
-            "--hidden-import",
-            "qwen_tts.inference",
-            "--hidden-import",
-            "qwen_tts.inference.qwen3_tts_model",
-            "--hidden-import",
-            "qwen_tts.inference.qwen3_tts_tokenizer",
-            "--hidden-import",
-            "qwen_tts.core",
-            "--hidden-import",
-            "qwen_tts.cli",
-            "--copy-metadata",
-            "qwen-tts",
             "--copy-metadata",
             "requests",
             "--copy-metadata",
@@ -201,122 +145,11 @@ def build_server(cuda=False):
             "tqdm",
             "--hidden-import",
             "requests",
-            # qwen_tts uses inspect.getsource() at runtime to locate
-            # modeling_qwen3_tts.py — needs physical .py source files bundled
-            "--collect-all",
-            "qwen_tts",
             # Fix for pkg_resources and jaraco namespace packages
             "--hidden-import",
             "pkg_resources.extern",
             "--collect-submodules",
             "jaraco",
-            # inflect uses typeguard @typechecked which calls inspect.getsource()
-            # at import time — needs .py source files, not just .pyc bytecode
-            "--collect-all",
-            "inflect",
-            # perth ships pretrained watermark model files (hparams.yaml, .pth.tar)
-            # in perth/perth_net/pretrained/ — needed by chatterbox at runtime
-            "--collect-all",
-            "perth",
-            # piper_phonemize ships espeak-ng-data/ (phoneme tables, language dicts)
-            # needed by LuxTTS for text-to-phoneme conversion
-            "--collect-all",
-            "piper_phonemize",
-            # HumeAI TADA — speech-language model using Llama + flow matching
-            "--hidden-import",
-            "backend.backends.hume_backend",
-            "--hidden-import",
-            "tada",
-            "--hidden-import",
-            "tada.modules",
-            "--hidden-import",
-            "tada.modules.tada",
-            "--hidden-import",
-            "tada.modules.encoder",
-            "--hidden-import",
-            "tada.modules.decoder",
-            "--hidden-import",
-            "tada.modules.aligner",
-            "--hidden-import",
-            "tada.modules.acoustic_spkr_verf",
-            "--hidden-import",
-            "tada.nn",
-            "--hidden-import",
-            "tada.nn.vibevoice",
-            "--hidden-import",
-            "tada.utils",
-            "--hidden-import",
-            "tada.utils.gray_code",
-            "--hidden-import",
-            "tada.utils.text",
-            # DAC shim — provides dac.nn.layers.Snake1d without the real
-            # descript-audio-codec package (which pulls onnx/tensorboard via
-            # descript-audiotools). The shim is in backend/utils/dac_shim.py.
-            "--hidden-import",
-            "backend.utils.dac_shim",
-            "--hidden-import",
-            "torchaudio",
-            "--collect-submodules",
-            "tada",
-            # Kokoro 82M — lightweight TTS engine using misaki G2P
-            # collect-all is required because transformers introspects .py source
-            # files at runtime (e.g. _can_set_attn_implementation opens the class
-            # file); hidden-import alone only bundles bytecode.
-            "--hidden-import",
-            "backend.backends.kokoro_backend",
-            "--collect-all",
-            "kokoro",
-            # misaki ships G2P data files (dictionaries, phoneme tables)
-            # that must be bundled for espeak/en/ja/zh G2P to work
-            "--collect-all",
-            "misaki",
-            # language_tags ships JSON data files (index.json etc.) loaded at
-            # runtime via: misaki → phonemizer → segments → csvw → language_tags
-            "--collect-all",
-            "language_tags",
-            # espeakng_loader ships the entire espeak-ng-data directory (369 files)
-            # loaded at import time by misaki.espeak via get_data_path()
-            "--collect-all",
-            "espeakng_loader",
-            # spacy en_core_web_sm model — misaki.en tries to spacy.cli.download()
-            # at runtime if not found, which calls pip as a subprocess and crashes
-            # the frozen binary. Bundle the model so spacy.util.is_package() passes.
-            "--collect-all",
-            "en_core_web_sm",
-            "--copy-metadata",
-            "en_core_web_sm",
-            "--hidden-import",
-            "en_core_web_sm",
-            # unidic-lite ships the MeCab dictionary used by fugashi (pulled in
-            # by misaki[ja]). The dict lives in unidic_lite/dicdir/ and is
-            # discovered via the package's DICDIR constant, so the data files
-            # must be collected or Japanese Kokoro voices crash at runtime.
-            "--collect-all",
-            "unidic_lite",
-            "--hidden-import",
-            "loguru",
-            # MCP server — Streamable-HTTP endpoint and the 4 voicebox.* tools.
-            # FastMCP pulls in a chain of deps (mcp, cyclopts, openapi-pydantic,
-            # etc.) that don't auto-discover cleanly under PyInstaller, so we
-            # collect them whole. Small compared to torch.
-            "--hidden-import",
-            "backend.mcp_server",
-            "--hidden-import",
-            "backend.mcp_server.server",
-            "--hidden-import",
-            "backend.mcp_server.tools",
-            "--hidden-import",
-            "backend.mcp_server.context",
-            "--hidden-import",
-            "backend.mcp_server.resolve",
-            "--hidden-import",
-            "backend.mcp_server.events",
-            "--collect-all",
-            "fastmcp",
-            "--collect-all",
-            "mcp",
-            "--hidden-import",
-            "sse_starlette",
         ]
     )
 
@@ -354,7 +187,28 @@ def build_server(cuda=False):
         for pkg in nvidia_packages:
             args.extend(["--exclude-module", pkg])
 
-    # Add MLX-specific imports if building on Apple Silicon (never for CUDA builds)
+    # JFW-1: TTS-/LLM-Pakete werden explizit ausgeschlossen — selbst wenn sie
+    # im Build-Venv installiert sind, duerfen sie nicht ins Binary. Das ist die
+    # Build-Seite des ACs "keine Runtime-Abhaengigkeiten, die nur fuer TTS
+    # gebraucht werden".
+    tts_packages = [
+        "qwen_tts",
+        "chatterbox",
+        "kokoro",
+        "zipvoice",
+        "tada",
+        "misaki",
+        "pedalboard",
+        "perth",
+        "piper_phonemize",
+        "inflect",
+        "spacy_pkuseg",
+        "linacodec",
+    ]
+    for pkg in tts_packages:
+        args.extend(["--exclude-module", pkg])
+
+    # MLX (Apple Silicon) — STT-only.
     if is_apple_silicon() and not cuda:
         logger.info("Building for Apple Silicon - including MLX dependencies")
         args.extend(
@@ -365,38 +219,12 @@ def build_server(cuda=False):
                 "mlx",
                 "--hidden-import",
                 "mlx.core",
-                "--hidden-import",
-                "mlx.nn",
-                "--hidden-import",
-                "mlx_audio",
-                "--hidden-import",
-                "mlx_audio.tts",
-                "--hidden-import",
-                "mlx_audio.stt",
-                "--hidden-import",
-                "mlx_lm",
-                "--hidden-import",
-                "backend.backends.qwen_llm_backend",
                 "--collect-submodules",
                 "mlx",
-                "--collect-submodules",
-                "mlx_audio",
-                "--collect-submodules",
-                "mlx_lm",
                 # Use --collect-all so PyInstaller bundles both data files AND
                 # native shared libraries (.dylib, .metallib) for MLX.
-                # Previously only --collect-data was used, which caused MLX to
-                # raise OSError at runtime inside the bundled binary because
-                # the Metal shader libraries were missing.
                 "--collect-all",
                 "mlx",
-                "--collect-all",
-                "mlx_audio",
-                # mlx_lm ships chat_templates/ JSON files and loads tool_parsers
-                # submodules dynamically via importlib at tokenizer load time,
-                # which --hidden-import alone can't resolve.
-                "--collect-all",
-                "mlx_lm",
             ]
         )
     elif not cuda:
@@ -440,8 +268,6 @@ def build_server(cuda=False):
                     "pip",
                     "install",
                     "torch",
-                    "torchvision",
-                    "torchaudio",
                     "--index-url",
                     "https://download.pytorch.org/whl/cpu",
                     "--force-reinstall",
@@ -467,8 +293,6 @@ def build_server(cuda=False):
                     "pip",
                     "install",
                     "torch",
-                    "torchvision",
-                    "torchaudio",
                     "--index-url",
                     "https://download.pytorch.org/whl/cu128",
                     "--force-reinstall",
@@ -480,96 +304,6 @@ def build_server(cuda=False):
     logger.info("Binary built in %s", backend_dir / "dist" / binary_name)
 
 
-def build_shim():
-    """Build the voicebox-mcp stdio shim as a tiny standalone binary.
-
-    This is the bridge for MCP clients that only speak stdio — it proxies
-    JSON-RPC to the main voicebox-server's /mcp endpoint. Keep it small: no
-    torch, no ML deps, just httpx + asyncio.
-    """
-    backend_dir = Path(__file__).parent
-
-    args = [
-        "mcp_shim/__main__.py",
-        "--onefile",
-        "--name",
-        "voicebox-mcp",
-        # Stdio-only — no console hiding needed on Windows since the parent
-        # MCP client is spawning this as a child process and wants stdio.
-        "--hidden-import",
-        "backend.mcp_shim",
-        "--hidden-import",
-        "backend.mcp_shim.__main__",
-        "--hidden-import",
-        "httpx",
-        "--hidden-import",
-        "httpx._transports.default",
-        "--hidden-import",
-        "anyio",
-        # Exclude everything heavy that httpx/asyncio don't actually need so
-        # the binary stays tiny (~15 MB instead of ~400 MB).
-        "--exclude-module",
-        "torch",
-        "--exclude-module",
-        "transformers",
-        "--exclude-module",
-        "mlx",
-        "--exclude-module",
-        "mlx_audio",
-        "--exclude-module",
-        "mlx_lm",
-        "--exclude-module",
-        "qwen_tts",
-        "--exclude-module",
-        "chatterbox",
-        "--exclude-module",
-        "zipvoice",
-        "--exclude-module",
-        "tada",
-        "--exclude-module",
-        "kokoro",
-        "--exclude-module",
-        "misaki",
-        "--exclude-module",
-        "spacy",
-        "--exclude-module",
-        "librosa",
-        "--exclude-module",
-        "numba",
-        "--exclude-module",
-        "numpy",
-        "--exclude-module",
-        "pedalboard",
-        "--exclude-module",
-        "fastapi",
-        "--exclude-module",
-        "uvicorn",
-        "--exclude-module",
-        "sqlalchemy",
-        "--exclude-module",
-        "fastmcp",
-        "--exclude-module",
-        "mcp",
-    ]
-
-    dist_dir = str(backend_dir / "dist")
-    build_dir = str(backend_dir / "build")
-    args.extend(
-        [
-            "--distpath",
-            dist_dir,
-            "--workpath",
-            build_dir,
-            "--noconfirm",
-            "--clean",
-        ]
-    )
-
-    os.chdir(backend_dir)
-    PyInstaller.__main__.run(args)
-    logger.info("Shim built: %s", backend_dir / "dist" / "voicebox-mcp")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build voicebox binaries")
     parser.add_argument(
@@ -577,13 +311,5 @@ if __name__ == "__main__":
         action="store_true",
         help="Build CUDA-enabled binary (voicebox-server-cuda)",
     )
-    parser.add_argument(
-        "--shim",
-        action="store_true",
-        help="Build the voicebox-mcp stdio shim binary instead of the server",
-    )
     cli_args = parser.parse_args()
-    if cli_args.shim:
-        build_shim()
-    else:
-        build_server(cuda=cli_args.cuda)
+    build_server(cuda=cli_args.cuda)

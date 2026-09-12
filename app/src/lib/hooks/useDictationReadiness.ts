@@ -16,7 +16,8 @@ export interface DictationReadiness {
   /** Subset of gates that are NOT yet satisfied — what the checklist renders. */
   missing: ReadinessGate[];
   stt: ModelReadiness | undefined;
-  llm: ModelReadiness | undefined;
+  /** JFW-1: kein lokales Textmodell — Feld wird nicht mehr gesetzt. */
+  llm?: ModelReadiness;
   inputMonitoring: boolean;
   accessibility: boolean;
   refetch: () => void;
@@ -67,11 +68,11 @@ export function useDictationReadiness(): DictationReadiness {
     // useSettings. refetchOnWindowFocus stays gated to the same condition.
     refetchInterval: (query) => {
       const d = query.state.data;
-      return d && d.stt.ready && d.llm.ready ? false : READINESS_POLL_INTERVAL_MS;
+      return d && d.stt.ready ? false : READINESS_POLL_INTERVAL_MS;
     },
     refetchOnWindowFocus: (query) => {
       const d = query.state.data;
-      return !(d && d.stt.ready && d.llm.ready);
+      return !(d && d.stt.ready);
     },
   });
 
@@ -80,14 +81,14 @@ export function useDictationReadiness(): DictationReadiness {
   const inputMonitoring = isTauri ? !inputMonNeeds : true;
   const accessibility = isTauri ? !a11yNeeds : true;
   const sttReady = data?.stt.ready ?? false;
-  const llmReady = data?.llm.ready ?? false;
 
+  // JFW-1 (jf-whisper-Profil): kein lokales Textmodell — das LLM-Gate ist aus
+  // der Readiness entfernt. Nur STT + Input-Monitoring gate die Diktation.
   const missing: ReadinessGate[] = [];
   if (!sttReady) missing.push('stt');
-  if (!llmReady) missing.push('llm');
   if (!inputMonitoring) missing.push('input_monitoring');
   if (!accessibility) missing.push('accessibility');
-  const canRecord = sttReady && llmReady && inputMonitoring;
+  const canRecord = sttReady && inputMonitoring;
 
   return {
     isLoading,

@@ -11,7 +11,6 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from .. import config, models
-from ..services import tts
 from ..database import get_db
 from ..utils.platform_detect import get_backend_type
 
@@ -59,7 +58,11 @@ async def health():
     from huggingface_hub import constants as hf_constants
     from pathlib import Path
 
-    tts_model = tts.get_tts_model()
+    # JFW-1: Der Health-Report zeigt den STT-Zustand (Whisper), nicht mehr das
+    # TTS-Modell — TTS ist aus dem Transkriptionsprofil ausgeschlossen.
+    from ..backends import get_stt_backend
+
+    stt_model = get_stt_backend()
     backend_type = get_backend_type()
 
     has_cuda = torch.cuda.is_available()
@@ -125,21 +128,17 @@ async def health():
     model_loaded = False
     model_size = None
     try:
-        if tts_model.is_loaded():
+        if stt_model.is_loaded():
             model_loaded = True
-            model_size = getattr(tts_model, "_current_model_size", None)
-            if not model_size:
-                model_size = getattr(tts_model, "model_size", None)
+            model_size = getattr(stt_model, "model_size", None)
     except Exception:
         model_loaded = False
         model_size = None
 
     model_downloaded = None
     try:
-        from ..backends import get_model_config
-
-        default_config = get_model_config("qwen-tts-1.7B")
-        default_model_id = default_config.hf_repo_id if default_config else "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        # JFW-1: Standard-Modell ist jetzt Whisper (STT), nicht Qwen-TTS.
+        default_model_id = "openai/whisper-turbo"
 
         try:
             from huggingface_hub import scan_cache_dir
@@ -186,10 +185,9 @@ async def filesystem_health():
     """Check filesystem health: directory existence, write permissions, and disk space."""
     import shutil
 
+    # JFW-1: nur Transkriptions-Verzeichnisse (generations/profiles sind TTS).
     dirs_to_check = {
-        "generations": config.get_generations_dir(),
         "captures": config.get_captures_dir(),
-        "profiles": config.get_profiles_dir(),
         "data": config.get_data_dir(),
     }
 

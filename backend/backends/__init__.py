@@ -460,14 +460,13 @@ def _get_qwen_llm_configs() -> list[ModelConfig]:
 
 
 def get_all_model_configs() -> list[ModelConfig]:
-    """Return the full list of model configs (TTS + STT + LLM)."""
-    return (
-        _get_qwen_model_configs()
-        + _get_qwen_custom_voice_configs()
-        + _get_non_qwen_tts_configs()
-        + _get_whisper_configs()
-        + _get_qwen_llm_configs()
-    )
+    """Return all model configs managed by this product.
+
+    JFW-1 (jf-whisper-Profil): nur Transkription — die Liste ist auf den
+    Whisper-STT-Kern reduziert. TTS-/LLM-Configs bleiben definiert, werden aber
+    nicht mehr verwaltet (kein Download/Load/Unload im UI).
+    """
+    return _get_whisper_configs()
 
 
 def get_tts_model_configs() -> list[ModelConfig]:
@@ -548,9 +547,12 @@ async def ensure_model_cached_or_raise(engine: str, model_size: str = "default")
 
 
 def unload_model_by_config(config: ModelConfig) -> bool:
-    """Unload a model given its config. Returns True if it was loaded, False otherwise."""
-    from . import get_tts_backend_for_engine
-    from ..services import tts, transcribe, llm as llm_service
+    """Unload a model given its config. Returns True if it was loaded, False otherwise.
+
+    JFW-1 (jf-whisper-Profil): nur der Whisper-STT-Kern wird verwaltet; TTS-/LLM-
+    Engines sind aus dem Produkt entfernt und werden nicht entladen.
+    """
+    from ..services import transcribe
 
     if config.engine == "whisper":
         whisper_model = transcribe.get_whisper_model()
@@ -559,87 +561,41 @@ def unload_model_by_config(config: ModelConfig) -> bool:
             return True
         return False
 
-    if config.engine == "qwen_llm":
-        backend = llm_service.get_llm_model()
-        loaded_size = getattr(backend, "_current_model_size", None) or getattr(backend, "model_size", None)
-        if backend.is_loaded() and loaded_size == config.model_size:
-            backend.unload_model()
-            return True
-        return False
-
-    if config.engine == "qwen":
-        tts_model = tts.get_tts_model()
-        loaded_size = getattr(tts_model, "_current_model_size", None) or getattr(tts_model, "model_size", None)
-        if tts_model.is_loaded() and loaded_size == config.model_size:
-            tts.unload_tts_model()
-            return True
-        return False
-
-    if config.engine == "qwen_custom_voice":
-        backend = get_tts_backend_for_engine(config.engine)
-        loaded_size = getattr(backend, "_current_model_size", None) or getattr(backend, "model_size", None)
-        if backend.is_loaded() and loaded_size == config.model_size:
-            backend.unload_model()
-            return True
-        return False
-
-    # All other TTS engines
-    backend = get_tts_backend_for_engine(config.engine)
-    if backend.is_loaded():
-        backend.unload_model()
-        return True
+    # TTS-/LLM-Configs werden in diesem Produkt nicht verwaltet.
     return False
 
 
 def check_model_loaded(config: ModelConfig) -> bool:
-    """Check if a model is currently loaded."""
-    from . import get_tts_backend_for_engine
-    from ..services import tts, transcribe, llm as llm_service
+    """Check if a model is currently loaded.
+
+    JFW-1 (jf-whisper-Profil): nur der Whisper-STT-Kern wird verwaltet.
+    """
+    from ..services import transcribe
 
     try:
         if config.engine == "whisper":
             whisper_model = transcribe.get_whisper_model()
             return whisper_model.is_loaded() and getattr(whisper_model, "model_size", None) == config.model_size
-
-        if config.engine == "qwen_llm":
-            backend = llm_service.get_llm_model()
-            loaded_size = getattr(backend, "_current_model_size", None) or getattr(backend, "model_size", None)
-            return backend.is_loaded() and loaded_size == config.model_size
-
-        if config.engine == "qwen":
-            tts_model = tts.get_tts_model()
-            loaded_size = getattr(tts_model, "_current_model_size", None) or getattr(tts_model, "model_size", None)
-            return tts_model.is_loaded() and loaded_size == config.model_size
-
-        if config.engine == "qwen_custom_voice":
-            backend = get_tts_backend_for_engine(config.engine)
-            loaded_size = getattr(backend, "_current_model_size", None) or getattr(backend, "model_size", None)
-            return backend.is_loaded() and loaded_size == config.model_size
-
-        backend = get_tts_backend_for_engine(config.engine)
-        return backend.is_loaded()
     except Exception:
         return False
+    return False
 
 
 def get_model_load_func(config: ModelConfig):
-    """Return a callable that loads/downloads the model."""
-    from . import get_tts_backend_for_engine
-    from ..services import tts, transcribe, llm as llm_service
+    """Return a callable that loads/downloads the model.
+
+    JFW-1 (jf-whisper-Profil): nur der Whisper-STT-Kern wird verwaltet; TTS-/LLM-
+    Engines sind aus dem Produkt entfernt.
+    """
+    from ..services import transcribe
 
     if config.engine == "whisper":
         return lambda: transcribe.get_whisper_model().load_model(config.model_size)
 
-    if config.engine == "qwen":
-        return lambda: tts.get_tts_model().load_model(config.model_size)
-
-    if config.engine == "qwen_custom_voice":
-        return lambda: get_tts_backend_for_engine(config.engine).load_model(config.model_size)
-
-    if config.engine == "qwen_llm":
-        return lambda: llm_service.get_llm_model().load_model(config.model_size)
-
-    return lambda: get_tts_backend_for_engine(config.engine).load_model()
+    raise HTTPException(
+        status_code=400,
+        detail=f"Engine {config.engine} is not managed by this product.",
+    )
 
 
 def get_tts_backend() -> TTSBackend:
@@ -653,66 +609,16 @@ def get_tts_backend() -> TTSBackend:
 
 
 def get_tts_backend_for_engine(engine: str) -> TTSBackend:
+    """JFW-1: TTS ist aus dem Transkriptionsprofil ausgeschlossen.
+
+    Fail-closed: statt einer Engine zu laden, wird sofort abgelehnt. Damit sind
+    die TTS-/LLM-Pakete (chatterbox, kokoro, qwen_tts, zipvoice, hume) nicht
+    mehr erreichbar — weder ueber Routen noch ueber den Backend-Registry.
     """
-    Get or create a TTS backend for the given engine.
-
-    Args:
-        engine: Engine name (e.g. "qwen", "luxtts", "chatterbox", "chatterbox_turbo")
-
-    Returns:
-        TTS backend instance
-    """
-    global _tts_backends
-
-    # Fast path: check without lock
-    if engine in _tts_backends:
-        return _tts_backends[engine]
-
-    # Slow path: create with lock to avoid duplicate instantiation
-    with _tts_backends_lock:
-        # Double-check after acquiring lock
-        if engine in _tts_backends:
-            return _tts_backends[engine]
-
-        if engine == "qwen":
-            backend_type = get_backend_type()
-            if backend_type == "mlx":
-                from .mlx_backend import MLXTTSBackend
-
-                backend = MLXTTSBackend()
-            else:
-                from .pytorch_backend import PyTorchTTSBackend
-
-                backend = PyTorchTTSBackend()
-        elif engine == "luxtts":
-            from .luxtts_backend import LuxTTSBackend
-
-            backend = LuxTTSBackend()
-        elif engine == "chatterbox":
-            from .chatterbox_backend import ChatterboxTTSBackend
-
-            backend = ChatterboxTTSBackend()
-        elif engine == "chatterbox_turbo":
-            from .chatterbox_turbo_backend import ChatterboxTurboTTSBackend
-
-            backend = ChatterboxTurboTTSBackend()
-        elif engine == "tada":
-            from .hume_backend import HumeTadaBackend
-
-            backend = HumeTadaBackend()
-        elif engine == "kokoro":
-            from .kokoro_backend import KokoroTTSBackend
-
-            backend = KokoroTTSBackend()
-        elif engine == "qwen_custom_voice":
-            from .qwen_custom_voice_backend import QwenCustomVoiceBackend
-
-            backend = QwenCustomVoiceBackend()
-        else:
-            raise ValueError(f"Unknown TTS engine: {engine}. Supported: {list(TTS_ENGINES.keys())}")
-
-        _tts_backends[engine] = backend
-        return backend
+    raise RuntimeError(
+        f"TTS engine '{engine}' is not available in the jf-whisper "
+        "transcription profile (TTS is out of scope)."
+    )
 
 
 def get_stt_backend() -> STTBackend:
@@ -745,31 +651,16 @@ def get_llm_backend() -> LLMBackend:
 
 
 def get_llm_backend_for_engine(engine: str) -> LLMBackend:
-    """Get or create an LLM backend for the given engine."""
-    global _llm_backends
+    """JFW-1: Lokale Textmodelle sind aus dem Transkriptionsprofil ausgeschlossen.
 
-    if engine in _llm_backends:
-        return _llm_backends[engine]
-
-    with _llm_backends_lock:
-        if engine in _llm_backends:
-            return _llm_backends[engine]
-
-        if engine == "qwen_llm":
-            backend_type = get_backend_type()
-            if backend_type == "mlx":
-                from .qwen_llm_backend import MLXQwenLLMBackend
-
-                backend = MLXQwenLLMBackend()
-            else:
-                from .qwen_llm_backend import PyTorchQwenLLMBackend
-
-                backend = PyTorchQwenLLMBackend()
-        else:
-            raise ValueError(f"Unknown LLM engine: {engine}. Supported: {list(LLM_ENGINES.keys())}")
-
-        _llm_backends[engine] = backend
-        return backend
+    Fail-closed: kein lokales Textmodell wird geladen oder aufgerufen (AC: "kein
+    lokales Textmodell wird automatisch oder manuell aus jf-whisper aufgerufen").
+    Damit ist der LLM-Pfad (qwen_llm_backend) nicht mehr erreichbar.
+    """
+    raise RuntimeError(
+        f"LLM engine '{engine}' is not available in the jf-whisper "
+        "transcription profile (local text models are out of scope)."
+    )
 
 
 def reset_backends():

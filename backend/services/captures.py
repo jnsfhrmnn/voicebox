@@ -21,7 +21,6 @@ from .. import config
 from ..database import Capture as DBCapture
 from ..models import CaptureResponse, RefinementFlagsModel
 from ..utils.audio import load_audio
-from .refinement import RefinementFlags, refine_transcript
 from .transcribe import get_whisper_model
 
 logger = logging.getLogger(__name__)
@@ -179,30 +178,6 @@ def delete_capture(capture_id: str, db: Session) -> bool:
     db.delete(row)
     db.commit()
     return True
-
-
-async def refine_capture(
-    capture_id: str,
-    flags: RefinementFlags,
-    model_size: Optional[str],
-    db: Session,
-) -> Optional[CaptureResponse]:
-    row = db.query(DBCapture).filter(DBCapture.id == capture_id).first()
-    if not row:
-        return None
-
-    refined, llm_size = await refine_transcript(
-        row.transcript_raw or "",
-        flags,
-        model_size=model_size,
-    )
-
-    row.transcript_refined = refined
-    row.llm_model = llm_size
-    row.refinement_flags = json.dumps(flags.to_dict())
-    db.commit()
-    db.refresh(row)
-    return _to_response(row)
 
 
 async def retranscribe_capture(

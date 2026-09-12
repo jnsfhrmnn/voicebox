@@ -428,7 +428,10 @@ class CaptureReadinessResponse(BaseModel):
     """
 
     stt: ModelReadiness
-    llm: ModelReadiness
+    # JFW-1 (jf-whisper-Profil): kein lokales Textmodell — das LLM-Gate ist aus
+    # der Readiness entfernt. Das Feld bleibt optional, damit alte Clients nicht
+    # brechen; neue Clients ignorieren es.
+    llm: Optional[ModelReadiness] = None
 
 
 class HealthResponse(BaseModel):
