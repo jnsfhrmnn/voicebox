@@ -417,3 +417,36 @@ _ensure-venv:
 [private]
 _ensure-sidecar:
     bun run setup:dev
+
+# ─── JFW-1 Projektkommandos (Spec) ──────────────────────────────────────
+# Die Spec definiert die Kommando-Schnittstelle des Forks. Wo ein Schritt noch
+# keinen verifizierten Ablauf hat, ist das Rezept fail-closed (Exit 1 mit
+# Hinweis), statt still einen falschen Erfolg zu melden.
+
+# Full setup: Python venv + JS deps + dev sidecar (Alias fuer `setup`)
+bootstrap: setup
+
+# Produktprofil-Gate: Importgraph, Tauri-Identitaet, Routen gegen das Profil
+# pruefen (fail-closed). Optional: --schema <db> prueft die DB-Schema-Konformitaet.
+verify-profile *ARGS:
+    python scripts/verify_profile.py --check {{ ARGS }}
+
+# CPU-Sidecar bauen (PyInstaller onefile) — Alias fuer `build-server`
+build-cpu: build-server
+
+# CUDA-Backend bauen (onedir). JFW-1 liefert noch keinen eigenen
+# Artefaktvertrag; bis JFW-12 ist der CUDA-Pfad bewusst deaktiviert.
+[private, windows]
+build-cuda:
+    @echo "build-cuda ist in JFW-1 deaktiviert (eigener Artefaktvertrag folgt mit JFW-12)."
+    exit 1
+
+# Installierbares Windows-Artefakt bauen — Alias fuer `build-tauri`
+package-windows: build-tauri
+
+# Windows-Smoke: App-Start, Captures, Aufnahme, Transkription. Der konkrete
+# Ablauf wird von /6-csk-qa definiert; bis dahin fail-closed statt Fake-Gruen.
+smoke-windows:
+    @echo "smoke-windows ist noch nicht verdrahtet — Ablauf folgt mit /6-csk-qa."
+    exit 1
+

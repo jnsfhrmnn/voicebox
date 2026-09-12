@@ -1,0 +1,6 @@
+# JFW-1: reproduzierbare Rust-Toolchain (AC: "Rust-Toolchainfile").
+# Exakt die Version, gegen die der Fork verifiziert wurde (cargo check EXIT=0).
+# CI nutzt dtolnay/rust-toolchain@stable; rustup loest diese Pin auf dieselbe
+# Version auf, damit Build und Verifikation identisch bleiben.
+[toolchain]
+channel = "1.97.1"
