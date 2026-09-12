@@ -47,31 +47,6 @@ def _copy_with_progress(src: Path, dst: Path, progress_manager, copied_so_far: i
     return copied_so_far
 
 
-@router.post("/models/load")
-async def load_model(model_size: str = "1.7B"):
-    """Manually load TTS model."""
-    from ..services import tts
-
-    try:
-        tts_model = tts.get_tts_model()
-        await tts_model.load_model_async(model_size)
-        return {"message": f"Model {model_size} loaded successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/models/unload")
-async def unload_model():
-    """Unload the default Qwen TTS model to free memory."""
-    from ..services import tts
-
-    try:
-        tts.unload_tts_model()
-        return {"message": "Model unloaded successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/models/{model_name}/unload")
 async def unload_model_by_name(model_name: str):
     """Unload a specific model from memory without deleting it from disk."""

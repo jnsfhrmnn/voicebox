@@ -68,3 +68,6 @@ temp/
 backend/tests/results/
 backend/tests/fixtures/reference_voice.wav
 backend/tests/fixtures/reference_voice.txt
+
+# JFW-1 Test-Venvs (nicht committen)
+.venv-test/

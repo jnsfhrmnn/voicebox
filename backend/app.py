@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import quote
 
 from . import __version__, config, database
-from .services import tts, transcribe, llm
+from .services import transcribe
 from .database import get_db
 from .utils.platform_detect import get_backend_type
 from .utils.progress import get_progress_manager
@@ -306,17 +306,9 @@ async def _run_shutdown() -> None:
     """Unload models on lifespan exit."""
     logger.info("Voicebox server shutting down...")
     try:
-        tts.unload_tts_model()
-    except Exception:
-        logger.exception("Failed to unload TTS model")
-    try:
         transcribe.unload_whisper_model()
     except Exception:
         logger.exception("Failed to unload Whisper model")
-    try:
-        llm.unload_llm_model()
-    except Exception:
-        logger.exception("Failed to unload LLM model")
 
 
 app = create_app()

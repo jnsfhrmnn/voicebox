@@ -116,44 +116,6 @@ async def delete_capture_endpoint(capture_id: str, db: Session = Depends(get_db)
     return {"message": f"Capture {capture_id} deleted"}
 
 
-@router.post("/captures/{capture_id}/refine", response_model=models.CaptureResponse)
-async def refine_capture_endpoint(
-    capture_id: str,
-    request: models.CaptureRefineRequest,
-    db: Session = Depends(get_db),
-):
-    saved = settings_service.get_capture_settings(db)
-    if request.flags is not None:
-        flags = RefinementFlags(
-            smart_cleanup=request.flags.smart_cleanup,
-            self_correction=request.flags.self_correction,
-            preserve_technical=request.flags.preserve_technical,
-        )
-    else:
-        flags = RefinementFlags(
-            smart_cleanup=saved.smart_cleanup,
-            self_correction=saved.self_correction,
-            preserve_technical=saved.preserve_technical,
-        )
-
-    resolved_model = request.model_size or saved.llm_model
-
-    try:
-        capture = await captures_service.refine_capture(
-            capture_id=capture_id,
-            flags=flags,
-            model_size=resolved_model,
-            db=db,
-        )
-    except Exception as e:
-        logger.exception("Refinement failed for capture %s", capture_id)
-        raise HTTPException(status_code=500, detail=str(e))
-
-    if not capture:
-        raise HTTPException(status_code=404, detail="Capture not found")
-    return capture
-
-
 @router.get("/capture/readiness", response_model=models.CaptureReadinessResponse)
 async def capture_readiness_endpoint(db: Session = Depends(get_db)):
     """Whether the STT and LLM models the user has selected are downloaded.

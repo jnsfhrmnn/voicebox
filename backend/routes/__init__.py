@@ -18,7 +18,6 @@ def register_routers(app: FastAPI) -> None:
     from .models import router as models_router
     from .settings import router as settings_router
     from .tasks import router as tasks_router
-    from .audio import router as audio_router
 
     app.include_router(health_router)
     app.include_router(captures_router)
@@ -26,4 +25,3 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(models_router)
     app.include_router(settings_router)
     app.include_router(tasks_router)
-    app.include_router(audio_router)
