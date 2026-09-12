@@ -291,10 +291,16 @@ if __name__ == "__main__":
         database.init_db()
         logger.info("Database initialized successfully")
 
-        # JFW-1 Ready-Handshake: strukturierte stdout-Zeile, die Tauri liest.
-        # Port/PID/Variante/Generation sind fuer den Caller bindend; das Bearer-Token
-        # wird NIE hier ausgegeben (nur per Umgebung uebergeben).
+        # JFW-1: dynamischer Loopback-Port. Port 0 bedeutet "OS waehlt"; wir
+        # reservieren den ephemeren Port vorab, damit der Handshake den echten
+        # Wert melden kann (uvicorn bindet erst danach).
         import json as _json
+
+        if args.port == 0:
+            import socket as _socket
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
+                _s.bind((args.host or "127.0.0.1", 0))
+                args.port = _s.getsockname()[1]
 
         generation = os.environ.get("JFWHISPER_GENERATION", "0")
         variant = os.environ.get("VOICEBOX_BACKEND_VARIANT", "cpu")

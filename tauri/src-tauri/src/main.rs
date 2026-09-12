@@ -200,6 +200,13 @@ struct ServerState {
     server_pid: Mutex<Option<u32>>,
     keep_running_on_close: Mutex<bool>,
     models_dir: Mutex<Option<String>>,
+    /// JFW-1: pro Start erzeugtes Bearer-Token. Bleibt im Rust-RAM, wird nie an
+    /// Webviews oder Logs ausgegeben; der Sidecar bekommt es nur per Umgebung.
+    api_token: Mutex<Option<String>>,
+    /// JFW-1: Generationennummer des aktiven Sidecars (Channel-Bindung).
+    generation: Mutex<u64>,
+    /// JFW-1: vom Sidecar im Ready-Handshake gemeldeter dynamischer Port.
+    sidecar_port: Mutex<Option<u16>>,
 }
 
 #[command]
@@ -219,77 +226,21 @@ async fn start_server(
     }
     // Check if server is already running (managed by this app instance)
     if state.child.lock().unwrap().is_some() {
-        return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
+        let port = *state.sidecar_port.lock().unwrap();
+        return Ok(format!("http://127.0.0.1:{}", port.unwrap_or(SERVER_PORT)));
     }
 
-    // Check if a voicebox server is already running on our port (from previous session with keep_running=true,
-    // or an externally started server e.g. via `python`, `uvicorn`, Docker, etc.)
+    // JFW-1: kein Wiederverwenden fremder Server mehr. Der Sidecar bindet einen
+    // dynamischen Loopback-Port und meldet ihn im Ready-Handshake; ein Prozess,
+    // der nur ein Health-Payload spricht, wird nicht uebernommen (Spec).
     #[cfg(unix)]
     {
-        use std::process::Command;
-        if let Ok(output) = Command::new("lsof")
-            .args(["-i", &format!(":{}", SERVER_PORT), "-sTCP:LISTEN"])
-            .output()
-        {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            for line in output_str.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let command = parts[0];
-                    let pid_str = parts[1];
-                    if command.contains("voicebox") {
-                        if let Ok(pid) = pid_str.parse::<u32>() {
-                            println!("Found existing voicebox-server on port {} (PID: {}), reusing it", SERVER_PORT, pid);
-                            // Store the PID so we can kill it on exit if needed
-                            *state.server_pid.lock().unwrap() = Some(pid);
-                            return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-                        }
-                    } else {
-                        // Process name doesn't contain "voicebox" — could be an external
-                        // Python/uvicorn/Docker server. Verify via HTTP health check.
-                        println!("Port {} in use by '{}' (PID: {}), checking if it's a Voicebox server...", SERVER_PORT, command, pid_str);
-                        if check_health(SERVER_PORT) {
-                            println!("Health check passed — reusing external server on port {}", SERVER_PORT);
-                            return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-                        }
-                        println!("Health check failed — port is occupied by a non-Voicebox process");
-                        return Err(format!(
-                            "Port {} is already in use by another application ({}). \
-                             Close it or change the Voicebox server port.",
-                            SERVER_PORT, command
-                        ));
-                    }
-                }
-            }
-        }
+        // JFW-1: Port-Wiederverwendung entfernt — dynamischer Port + Handshake.
     }
     
     #[cfg(windows)]
     {
-        use std::net::TcpStream;
-        if TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", SERVER_PORT).parse().unwrap(),
-            std::time::Duration::from_secs(1),
-        ).is_ok() {
-            // Port is in use — check if it's a voicebox process by name first
-            if let Some(pid) = find_voicebox_pid_on_port(SERVER_PORT) {
-                println!("Found existing voicebox-server on port {} (PID: {}), reusing it", SERVER_PORT, pid);
-                *state.server_pid.lock().unwrap() = Some(pid);
-                return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-            }
-            // Process name doesn't match — could be an external Python/Docker server.
-            // Verify via HTTP health check before giving up.
-            println!("Port {} in use by unknown process, checking if it's a Voicebox server...", SERVER_PORT);
-            if check_health(SERVER_PORT) {
-                println!("Health check passed — reusing external server on port {}", SERVER_PORT);
-                return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-            }
-            return Err(format!(
-                "Port {} is already in use by another application. \
-                 Close the other application or change the Voicebox port.",
-                SERVER_PORT
-            ));
-        }
+        // JFW-1: Port-Wiederverwendung entfernt — dynamischer Port + Handshake.
     }
 
     // Kill any orphaned voicebox-server from previous session on legacy port 8000
@@ -345,11 +296,15 @@ async fn start_server(
     // Brief wait for port to be released
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // Get app data directory
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    // JFW-1: eigener Datenroot %LOCALAPPDATA%\JFWhisper (Profil: app_identity.data_root).
+    // Die produktive Voicebox-Installation unter sh.voicebox.app bleibt unangetastet.
+    let data_dir = {
+        let local = std::env::var("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| app.path().app_data_dir()
+                .expect("no LOCALAPPDATA and no app_data_dir"));
+        local.join("JFWhisper")
+    };
 
     // Ensure data directory exists
     std::fs::create_dir_all(&data_dir)
@@ -450,12 +405,31 @@ async fn start_server(
 
     println!("Sidecar command created successfully");
 
+    // JFW-1: pro Start zufaelliges Bearer-Token + Generation. Token bleibt im
+    // Rust-RAM (state.api_token) und wird nur per Umgebung an den Sidecar
+    // uebergeben — nie in Logs, nie an Webviews.
+    let api_token = {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        const ALPHABET: [char; 16] = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p'];
+        let token: String = (0..32).map(|_| ALPHABET[rng.gen_range(0usize..16)]).collect();
+        *state.api_token.lock().unwrap() = Some(token.clone());
+        token
+    };
+    let generation = {
+        let mut g = state.generation.lock().unwrap();
+        *g += 1;
+        *g
+    };
+
     // Build common args
     let data_dir_str = data_dir
         .to_str()
         .ok_or_else(|| "Invalid data dir path".to_string())?
         .to_string();
-    let port_str = SERVER_PORT.to_string();
+    // JFW-1: dynamischer Loopback-Port. "0" laesst das OS einen ephemeren Port
+    // waehlen; der Sidecar meldet den echten Wert im Ready-Handshake zurueck.
+    let port_str = "0".to_string();
     let parent_pid_str = std::process::id().to_string();
     let is_remote = remote.unwrap_or(false);
 
@@ -480,6 +454,7 @@ async fn start_server(
         if let Some(ref dir) = effective_models_dir {
             cmd = cmd.env("VOICEBOX_MODELS_DIR", dir);
         }
+        cmd = cmd.env("JFWHISPER_API_TOKEN", &api_token).env("JFWHISPER_GENERATION", generation.to_string());
         cmd.spawn()
     } else {
         // Use the bundled CPU sidecar
@@ -490,6 +465,7 @@ async fn start_server(
         if let Some(ref dir) = effective_models_dir {
             sidecar = sidecar.env("VOICEBOX_MODELS_DIR", dir);
         }
+        sidecar = sidecar.env("JFWHISPER_API_TOKEN", &api_token).env("JFWHISPER_GENERATION", generation.to_string());
         println!("Spawning server process...");
         sidecar.spawn()
     };
@@ -581,6 +557,17 @@ async fn start_server(
                 match event {
                     tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
                         let line_str = String::from_utf8_lossy(&line);
+                        // JFW-1: strukturierte Ready-Zeile (JSON) — Port/PID/
+                        // Variante/Generation sind fuer den Caller bindend.
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line_str.trim()) {
+                            if v.get("jfwhisper_ready").and_then(|b| b.as_bool()) == Some(true) {
+                                let port = v.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                                *state.sidecar_port.lock().unwrap() = Some(port);
+                                println!("Server is ready! (Handshake: port={}, generation={})",
+                                    port, v.get("generation").map(|g| g.to_string()).unwrap_or_default());
+                                break;
+                            }
+                        }
                         println!("Server output: {}", line_str);
                         let _ = app.emit("server-log", serde_json::json!({
                             "stream": "stdout",
@@ -605,9 +592,10 @@ async fn start_server(
                             error_output.push(line_str.clone());
                         }
 
-                        // Uvicorn logs to stderr, so check there too
+                        // Uvicorn logs to stderr, so check there too.
+                        // JFW-1: Fallback ohne Handshake — Port aus State (0 = unbekannt).
                         if line_str.contains("Uvicorn running") || line_str.contains("Application startup complete") {
-                            println!("Server is ready!");
+                            println!("Server is ready! (stderr-Fallback)");
                             break;
                         }
                     }
@@ -685,7 +673,8 @@ async fn start_server(
         }
     });
 
-    Ok(format!("http://127.0.0.1:{}", SERVER_PORT))
+    let port = *state.sidecar_port.lock().unwrap();
+    Ok(format!("http://127.0.0.1:{}", port.unwrap_or(SERVER_PORT)))
 }
 
 #[command]
@@ -727,9 +716,12 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
                 .build()
                 .unwrap();
 
-            let _ = client
-                .post(&format!("http://127.0.0.1:{}/shutdown", SERVER_PORT))
-                .send();
+            let port = *state.sidecar_port.lock().unwrap();
+            if let Some(port) = port {
+                let _ = client
+                    .post(&format!("http://127.0.0.1:{}/shutdown", port))
+                    .send();
+            }
 
             println!("Shutdown request sent (server watchdog will handle cleanup)");
         }
@@ -1239,6 +1231,9 @@ pub fn run() {
             server_pid: Mutex::new(None),
             keep_running_on_close: Mutex::new(false),
             models_dir: Mutex::new(None),
+            api_token: Mutex::new(None),
+            generation: Mutex::new(0),
+            sidecar_port: Mutex::new(None),
         })
         .manage(audio_capture::AudioCaptureState::new())
         .manage(audio_output::AudioOutputState::new())
@@ -1457,12 +1452,15 @@ pub fn run() {
                             .timeout(std::time::Duration::from_secs(2))
                             .build()
                             .unwrap();
+                        let wd_port = *state.sidecar_port.lock().unwrap();
+                        if let Some(wd_port) = wd_port {
                         match client
-                            .post(&format!("http://127.0.0.1:{}/watchdog/disable", SERVER_PORT))
+                            .post(&format!("http://127.0.0.1:{}/watchdog/disable", wd_port))
                             .send()
                         {
                             Ok(resp) => println!("Watchdog disable response: {}", resp.status()),
                             Err(e) => eprintln!("Failed to disable watchdog: {}", e),
+                        }
                         }
                     } else {
                         // Server will self-terminate via parent-pid watchdog when

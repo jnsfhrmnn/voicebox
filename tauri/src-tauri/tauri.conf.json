@@ -13,8 +13,7 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/voicebox-server",
-      "binaries/voicebox-mcp"
+      "binaries/voicebox-server"
     ],
     "icon": [
       "icons/32x32.png",
