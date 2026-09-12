@@ -14,20 +14,68 @@
     "data_root_default": "%LOCALAPPDATA%\\JFWhisper"
   },
   "frontend_routes": {
-    "active": ["/captures", "/models", "/settings", "/settings/general", "/settings/captures", "/settings/gpu", "/settings/logs", "/settings/about"],
-    "forbidden": ["/", "/stories", "/voices", "/effects", "/settings/generation", "/settings/mcp"]
+    "active": [
+      "/captures",
+      "/models",
+      "/settings",
+      "/settings/general",
+      "/settings/captures",
+      "/settings/gpu",
+      "/settings/logs",
+      "/settings/about"
+    ],
+    "forbidden": [
+      "/",
+      "/stories",
+      "/voices",
+      "/effects",
+      "/settings/generation",
+      "/settings/mcp"
+    ]
   },
   "fastapi_routers": {
-    "active": ["health", "captures", "transcription", "models", "settings", "tasks", "audio"],
-    "forbidden": ["profiles", "channels", "generations", "history", "llm", "stories", "effects", "cuda", "speak", "mcp_bindings", "events"]
+    "active": [
+      "health",
+      "captures",
+      "transcription",
+      "models",
+      "settings",
+      "tasks",
+      "audio"
+    ],
+    "forbidden": [
+      "profiles",
+      "channels",
+      "generations",
+      "history",
+      "llm",
+      "stories",
+      "effects",
+      "cuda",
+      "speak",
+      "mcp_bindings",
+      "events"
+    ]
   },
   "model_classes": {
-    "active": ["whisper-stt"],
-    "forbidden": ["tts", "voice-cloning", "local-llm", "story-generation"]
+    "active": [
+      "whisper-stt"
+    ],
+    "forbidden": [
+      "tts",
+      "voice-cloning",
+      "local-llm",
+      "story-generation"
+    ]
   },
   "sidecars": {
-    "active": ["jf-whisper-server (CPU onefile)"],
-    "forbidden": ["voicebox-mcp", "voicebox-updater"]
+    "active": [
+      "jf-whisper-server (CPU onefile)"
+    ],
+    "forbidden": [
+      "voicebox-mcp",
+      "voicebox-updater"
+    ]
   },
   "tauri_capabilities": {
     "with_global_tauri": false,
@@ -39,5 +87,26 @@
     "Einziges Build-Profil des Forks. Runtime-Flags koennen verbotene Funktionen nicht reaktivieren.",
     "cuda-Router ist verboten, bis JFW-12 den eigenen Artefaktvertrag liefert; Voicebox-CUDA-Download bleibt deaktiviert.",
     "events/history/channels/profiles sind TTS-/Generation-Flaechen und bleiben aus dem Laufzeitvertrag entfernt."
-  ]
+  ],
+  "database_tables": {
+    "active": [
+      "captures",
+      "capture_settings"
+    ],
+    "forbidden": [
+      "profiles",
+      "profile_samples",
+      "generations",
+      "generation_versions",
+      "stories",
+      "story_items",
+      "projects",
+      "effect_presets",
+      "audio_channels",
+      "channel_device_mappings",
+      "profile_channel_mappings",
+      "generation_settings",
+      "mcp_client_bindings"
+    ]
+  }
 }

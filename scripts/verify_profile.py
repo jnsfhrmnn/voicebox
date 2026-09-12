@@ -123,6 +123,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="Fork gegen Profil pruefen (fail-closed)")
     ap.add_argument("--write-marker", action="store_true", help="generated/profile-hash.txt schreiben")
+    ap.add_argument("--schema", metavar="DB", default=None,
+                    help="zusaezlich: jf-whisper-DB gegen database_tables des Profils pruefen (fail-closed)")
     args = ap.parse_args()
 
     profile = load_profile()
@@ -147,6 +149,13 @@ def main() -> int:
         check_routers(profile, errors)
         check_tauri(profile, errors)
         check_frontend_routes(profile, errors)
+
+        # Optionales Schema-Gate: DB gegen database_tables des Profils pruefen.
+        if args.schema:
+            from verify_schema import check as schema_check  # noqa: PLC0415 (gleicher Ordner)
+            rc = schema_check(Path(args.schema))
+            if rc != 0:
+                errors.append(f"Schema-Gate fehlgeschlagen (Exit {rc}): {args.schema}")
 
         # Marker-Drift: versionierter Hash muss zum aktuellen Profil passen
         if MARKER_PATH.exists():
