@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Voicebox",
+  "productName": "JF Whisper",
   "version": "0.5.0",
-  "identifier": "sh.voicebox.app",
+  "identifier": "de.jensfehrmann.jfwhisper",
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
@@ -12,8 +12,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": "v1Compatible",
-    "externalBin": ["binaries/voicebox-server", "binaries/voicebox-mcp"],
+    "externalBin": [
+      "binaries/voicebox-server",
+      "binaries/voicebox-mcp"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,8 +38,10 @@
   "app": {
     "macOSPrivateApi": true,
     "security": {
-      "csp": null,
-      "capabilities": ["default"]
+      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:;",
+      "capabilities": [
+        "default"
+      ]
     },
     "windows": [
       {
@@ -53,15 +57,11 @@
         "titleBarStyle": "Overlay"
       }
     ],
-    "withGlobalTauri": true
+    "withGlobalTauri": false
   },
   "plugins": {
     "shell": {
-      "open": ".*"
-    },
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxRENBQkRBQjdBNTM1OTIKUldTU05hVzMycXZjNGJGcUxmcVVocll2QjdSaTJNdlFxR2M3VDJsMnVvbDdyZGRPMmRlOW9aWTcK",
-      "endpoints": ["https://github.com/jamiepine/voicebox/releases/latest/download/latest.json"]
+      "open": []
     }
   }
 }

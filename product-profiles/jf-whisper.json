@@ -1,0 +1,43 @@
+{
+  "profile": "jf-whisper",
+  "version": "0.1.0",
+  "baseline_commit": "7df366d0c8302c09170102b86e801a1f46fb81cc",
+  "patch_ledger": [
+    "2c9d02af62ff978ad33b1e9f303547b26becb079",
+    "b680097dfbfb202763172def602eb2d9cc9a82f3",
+    "a5773807a596c0db217a36342abc4bd843ff2e61"
+  ],
+  "app_identity": {
+    "tauri_identifier": "de.jensfehrmann.jfwhisper",
+    "product_name": "JF Whisper",
+    "data_root_env": "JFWHISPER_DATA_ROOT",
+    "data_root_default": "%LOCALAPPDATA%\\JFWhisper"
+  },
+  "frontend_routes": {
+    "active": ["/captures", "/models", "/settings", "/settings/general", "/settings/captures", "/settings/gpu", "/settings/logs", "/settings/about"],
+    "forbidden": ["/", "/stories", "/voices", "/effects", "/settings/generation", "/settings/mcp"]
+  },
+  "fastapi_routers": {
+    "active": ["health", "captures", "transcription", "models", "settings", "tasks", "audio"],
+    "forbidden": ["profiles", "channels", "generations", "history", "llm", "stories", "effects", "cuda", "speak", "mcp_bindings", "events"]
+  },
+  "model_classes": {
+    "active": ["whisper-stt"],
+    "forbidden": ["tts", "voice-cloning", "local-llm", "story-generation"]
+  },
+  "sidecars": {
+    "active": ["jf-whisper-server (CPU onefile)"],
+    "forbidden": ["voicebox-mcp", "voicebox-updater"]
+  },
+  "tauri_capabilities": {
+    "with_global_tauri": false,
+    "shell_open_allowlist": [],
+    "updater_enabled": false,
+    "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:;"
+  },
+  "notes": [
+    "Einziges Build-Profil des Forks. Runtime-Flags koennen verbotene Funktionen nicht reaktivieren.",
+    "cuda-Router ist verboten, bis JFW-12 den eigenen Artefaktvertrag liefert; Voicebox-CUDA-Download bleibt deaktiviert.",
+    "events/history/channels/profiles sind TTS-/Generation-Flaechen und bleiben aus dem Laufzeitvertrag entfernt."
+  ]
+}
