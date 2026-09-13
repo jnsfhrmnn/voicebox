@@ -5,7 +5,6 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import {
   Captions,
-  Check,
   ChevronDown,
   CircleDot,
   Copy,
@@ -15,15 +14,12 @@ import {
   Loader2,
   Mic,
   Settings2,
-  Sparkles,
   Square,
   Trash2,
   Upload,
-  Volume2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AudioBars } from '@/components/AudioBars';
 import { CapturePill } from '@/components/CapturePill/CapturePill';
 import { CaptureInlinePlayer } from '@/components/CapturesTab/CaptureInlinePlayer';
 import { DictationReadinessChecklist } from '@/components/CapturesTab/DictationReadinessChecklist';
@@ -62,18 +58,13 @@ import type {
   CaptureListResponse,
   CaptureResponse,
   CaptureSource,
-  VoiceProfileResponse,
 } from '@/lib/api/types';
-import type { LanguageCode } from '@/lib/constants/languages';
-import { BOTTOM_SAFE_AREA_PADDING } from '@/lib/constants/ui';
+import { cn } from '@/lib/utils/cn';
 import { useCaptureRecordingSession } from '@/lib/hooks/useCaptureRecordingSession';
 import { useDictationReadiness } from '@/lib/hooks/useDictationReadiness';
 import { useCaptureSettings } from '@/lib/hooks/useSettings';
-import { cn } from '@/lib/utils/cn';
 import { formatAbsoluteDate, formatDate } from '@/lib/utils/format';
 import { displayLabelForKey, modifierSideHint } from '@/lib/utils/keyCodes';
-import { useGenerationStore } from '@/stores/generationStore';
-import { usePlayerStore } from '@/stores/playerStore';
 
 const CAPTURE_AUDIO_MIME = 'audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm';
 
@@ -129,8 +120,6 @@ function SourceBadge({ source }: { source: CaptureSource }) {
   );
 }
 
-type PlaybackState = 'idle' | 'generating' | 'playing';
-
 export function CapturesTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -139,29 +128,16 @@ export function CapturesTab() {
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
   const snippetOf = (capture: CaptureResponse): string => {
-    const source = capture.transcript_refined || capture.transcript_raw || '';
+    const source = capture.transcript_raw || '';
     return source.trim() || t('captures.snippetEmpty');
   };
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [showRefined, setShowRefined] = useState(true);
-  const [launchedPlayAsId, setLaunchedPlayAsId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const audioUrl = usePlayerStore((s) => s.audioUrl);
-  const playerAudioId = usePlayerStore((s) => s.audioId);
-  const playerIsPlaying = usePlayerStore((s) => s.isPlaying);
-  const isPlayerVisible = !!audioUrl;
-
-  const setIsPlaying = usePlayerStore((s) => s.setIsPlaying);
-
-  const addPendingGeneration = useGenerationStore((s) => s.addPendingGeneration);
-  const pendingGenerationIds = useGenerationStore((s) => s.pendingGenerationIds);
-
-  const { settings: captureSettings, update: updateCaptureSettings } = useCaptureSettings();
+  const { settings: captureSettings } = useCaptureSettings();
   const sttModel = captureSettings?.stt_model ?? 'turbo';
-  const llmModel = captureSettings?.llm_model ?? '0.6B';
   const hotkeyEnabled = captureSettings?.hotkey_enabled ?? false;
   const pushToTalkKeys = captureSettings?.chord_push_to_talk_keys ?? [];
   const toggleToTalkKeys = captureSettings?.chord_toggle_to_talk_keys ?? [];
@@ -174,11 +150,6 @@ export function CapturesTab() {
   const { data: capturesData, isLoading: capturesLoading } = useQuery({
     queryKey: ['captures'],
     queryFn: () => apiClient.listCaptures(200, 0),
-  });
-
-  const { data: profiles } = useQuery({
-    queryKey: ['profiles'],
-    queryFn: () => apiClient.listProfiles(),
   });
 
   const captures = capturesData?.items ?? [];
@@ -230,23 +201,10 @@ export function CapturesTab() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return captures;
-    return captures.filter((c) => {
-      const raw = (c.transcript_raw || '').toLowerCase();
-      const refined = (c.transcript_refined || '').toLowerCase();
-      return raw.includes(q) || refined.includes(q);
-    });
+    return captures.filter((c) => (c.transcript_raw || '').toLowerCase().includes(q));
   }, [search, captures]);
 
   const selected = captures.find((c) => c.id === selectedId) ?? null;
-  // Source of truth is capture_settings.default_playback_voice_id, shared
-  // with Settings → Captures and the MCP global default. Stale ids (e.g.
-  // referenced profile was deleted) fall through to the first profile.
-  const storedVoiceId = captureSettings?.default_playback_voice_id ?? null;
-  const playAsVoice =
-    (storedVoiceId && profiles?.find((p) => p.id === storedVoiceId)) ||
-    profiles?.[0] ||
-    null;
-  const playAsVoiceId = playAsVoice?.id ?? null;
 
   const deleteMutation = useMutation({
     mutationFn: async (captureId: string) => apiClient.deleteCapture(captureId),
@@ -259,45 +217,6 @@ export function CapturesTab() {
     },
   });
 
-  const playAsMutation = useMutation({
-    mutationFn: async ({ capture, voice }: { capture: CaptureResponse; voice: VoiceProfileResponse }) => {
-      const text = capture.transcript_refined || capture.transcript_raw;
-      if (!text.trim()) throw new Error(t('captures.noTranscriptError'));
-      const language = (capture.language || voice.language) as LanguageCode;
-      // Preset profiles (Kokoro etc.) reject the qwen default — honor the
-      // profile's stored engine preference. Cloned profiles without an
-      // override fall through to whatever the backend picks.
-      const engine = voice.default_engine as
-        | 'qwen' | 'qwen_custom_voice' | 'luxtts' | 'chatterbox'
-        | 'chatterbox_turbo' | 'tada' | 'kokoro'
-        | undefined;
-      return apiClient.generateSpeech({
-        profile_id: voice.id,
-        text,
-        language,
-        engine,
-      });
-    },
-    onSuccess: (result) => {
-      // /generate is queue-based — it returns a generating row with an empty
-      // audio_path. Hand the id to the global SSE handler which polls
-      // /generation/{id}/status and triggers autoplay on completion.
-      setLaunchedPlayAsId(result.id);
-      addPendingGeneration(result.id);
-    },
-    onError: (err: Error) => {
-      toast({ title: t('captures.toast.playAsFailed'), description: err.message, variant: 'destructive' });
-    },
-  });
-
-  const playbackState: PlaybackState = playAsMutation.isPending
-    ? 'generating'
-    : launchedPlayAsId && pendingGenerationIds.has(launchedPlayAsId)
-      ? 'generating'
-      : launchedPlayAsId && playerAudioId === launchedPlayAsId && playerIsPlaying
-        ? 'playing'
-        : 'idle';
-
   const handleUploadClick = () => uploadInputRef.current?.click();
 
   const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>, source: CaptureSource) => {
@@ -309,9 +228,7 @@ export function CapturesTab() {
 
   const handleCopy = async () => {
     if (!selected) return;
-    const text = showRefined
-      ? selected.transcript_refined || selected.transcript_raw
-      : selected.transcript_raw;
+    const text = selected.transcript_raw || '';
     try {
       await navigator.clipboard.writeText(text || '');
       toast({ title: t('captures.toast.transcriptCopied') });
@@ -341,9 +258,9 @@ export function CapturesTab() {
         filters: [{ name: 'Audio', extensions: ['wav'] }],
       });
       if (!dest) return;
-      const res = await fetch(apiClient.getCaptureAudioUrl(selected.id));
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const buf = new Uint8Array(await res.arrayBuffer());
+      // JFW-1: Audio ueber den Sidecar-Transport (Auth/Generation).
+      const { blob } = await apiClient.getCaptureAudio(selected.id);
+      const buf = new Uint8Array(await blob.arrayBuffer());
       await writeFile(dest, buf);
       exportToastSuccess(dest);
     } catch (err) {
@@ -353,7 +270,7 @@ export function CapturesTab() {
 
   const handleExportTranscript = async () => {
     if (!selected) return;
-    const text = (selected.transcript_refined || selected.transcript_raw || '').trim();
+    const text = (selected.transcript_raw || '').trim();
     if (!text) {
       toast({ title: t('captures.toast.exportEmpty'), variant: 'destructive' });
       return;
@@ -379,20 +296,16 @@ export function CapturesTab() {
     if (capture.duration_ms != null) lines.push(`- **Duration:** ${formatDuration(capture.duration_ms)}`);
     if (capture.language) lines.push(`- **Language:** ${capture.language}`);
     if (capture.stt_model) lines.push(`- **STT model:** ${capture.stt_model}`);
-    if (capture.llm_model) lines.push(`- **LLM model:** ${capture.llm_model}`);
     lines.push('');
-    if (capture.transcript_refined?.trim()) {
-      lines.push('## Refined transcript', '', capture.transcript_refined.trim(), '');
-    }
     if (capture.transcript_raw?.trim()) {
-      lines.push('## Raw transcript', '', capture.transcript_raw.trim(), '');
+      lines.push('## Transcript', '', capture.transcript_raw.trim(), '');
     }
     return lines.join('\n');
   };
 
   const handleExportMarkdown = async () => {
     if (!selected) return;
-    const hasContent = (selected.transcript_refined || selected.transcript_raw || '').trim();
+    const hasContent = (selected.transcript_raw || '').trim();
     if (!hasContent) {
       toast({ title: t('captures.toast.exportEmpty'), variant: 'destructive' });
       return;
@@ -408,29 +321,6 @@ export function CapturesTab() {
     } catch (err) {
       exportToastError(err);
     }
-  };
-
-  const handlePlayAs = (voice?: VoiceProfileResponse) => {
-    if (!selected) return;
-    // Stop the current playback when the button is in its 'playing' state
-    // and the user clicked the main button without picking a new voice.
-    if (!voice && playbackState === 'playing') {
-      setIsPlaying(false);
-      return;
-    }
-    const target = voice ?? playAsVoice;
-    if (!target) {
-      toast({
-        title: t('captures.toast.noVoice'),
-        description: t('captures.toast.noVoiceDescription'),
-        variant: 'destructive',
-      });
-      return;
-    }
-    if (voice && voice.id !== playAsVoiceId) {
-      updateCaptureSettings({ default_playback_voice_id: voice.id });
-    }
-    playAsMutation.mutate({ capture: selected, voice: target });
   };
 
   return (
@@ -470,7 +360,7 @@ export function CapturesTab() {
             />
           </ListPaneHeader>
 
-          <ListPaneScroll className={cn(isPlayerVisible && BOTTOM_SAFE_AREA_PADDING)}>
+          <ListPaneScroll>
             <div className="px-4 pb-6 space-y-1">
               {capturesLoading ? (
                 <div className="px-4 py-12 flex items-center justify-center text-muted-foreground">
@@ -487,7 +377,6 @@ export function CapturesTab() {
               ) : (
                 filtered.map((capture) => {
                 const isActive = selectedId === capture.id;
-                const refined = !!capture.transcript_refined;
                 return (
                   <button
                     type="button"
@@ -512,18 +401,7 @@ export function CapturesTab() {
                     <div className="text-[13px] text-foreground/90 line-clamp-2 leading-snug mb-2">
                       {snippetOf(capture)}
                     </div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <SourceBadge source={capture.source} />
-                      {refined && (
-                        <Badge
-                          variant="secondary"
-                          className="h-5 px-1.5 text-[10px] gap-1 font-medium bg-accent/10 text-accent border border-accent/20"
-                        >
-                          <Sparkles className="h-2.5 w-2.5" />
-                          {t('captures.transcript.refined')}
-                        </Badge>
-                      )}
-                    </div>
+                    <SourceBadge source={capture.source} />
                   </button>
                 );
               })
@@ -545,7 +423,6 @@ export function CapturesTab() {
               <span>
                 {t('captures.header.modelSummary', {
                   stt: sttModel.charAt(0).toUpperCase() + sttModel.slice(1),
-                  llm: llmModel,
                 })}
               </span>
             </div>
@@ -610,12 +487,7 @@ export function CapturesTab() {
         </div>
 
         {selected ? (
-          <div
-            className={cn(
-              'flex-1 overflow-y-auto pt-20 px-8 pb-8',
-              isPlayerVisible && BOTTOM_SAFE_AREA_PADDING,
-            )}
-          >
+          <div className="flex-1 overflow-y-auto pt-20 px-8 pb-8">
             {/* Meta row */}
             <div className="flex items-center gap-3 mb-4 text-xs text-muted-foreground">
               <span>{formatAbsoluteDate(selected.created_at)}</span>
@@ -632,61 +504,29 @@ export function CapturesTab() {
             {/* Audio player card */}
             <div className="rounded-xl border border-border bg-muted/20 p-4 mb-6">
               <CaptureInlinePlayer
-                audioUrl={apiClient.getCaptureAudioUrl(selected.id)}
+                captureId={selected.id}
                 fallbackDurationMs={selected.duration_ms}
               />
             </div>
 
             {/* Transcript header */}
             <div className="flex items-center gap-3 mb-3">
-              <div className="inline-flex rounded-md bg-muted/40 p-0.5 border border-border">
-                <button
-                  type="button"
-                  onClick={() => setShowRefined(true)}
-                  disabled={!selected.transcript_refined}
-                  className={cn(
-                    'px-3 py-1 text-xs font-medium rounded transition-colors',
-                    showRefined && selected.transcript_refined
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground disabled:opacity-40',
-                  )}
-                >
-                  <Sparkles className="h-3 w-3 inline-block mr-1 -translate-y-px" />
-                  {t('captures.transcript.refined')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowRefined(false)}
-                  className={cn(
-                    'px-3 py-1 text-xs font-medium rounded transition-colors',
-                    !showRefined || !selected.transcript_refined
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <Captions className="h-3 w-3 inline-block mr-1 -translate-y-px" />
-                  {t('captures.transcript.raw')}
-                </button>
-              </div>
+              <span className="text-xs font-medium text-muted-foreground">
+                {t('captures.transcript.raw')}
+              </span>
               <div className="flex-1" />
               <span className="text-xs text-muted-foreground">
-                {showRefined && selected.transcript_refined
-                  ? t('captures.transcript.refinedHint', { model: selected.llm_model ?? llmModel })
-                  : selected.stt_model
-                    ? t('captures.transcript.rawHint', { model: selected.stt_model })
-                    : null}
+                {selected.stt_model
+                  ? t('captures.transcript.rawHint', { model: selected.stt_model })
+                  : null}
               </span>
             </div>
 
             {/* Transcript body */}
             <div className="rounded-xl border border-border bg-muted/10">
               <Textarea
-                key={`${selected.id}-${showRefined}`}
-                defaultValue={
-                  showRefined && selected.transcript_refined
-                    ? selected.transcript_refined
-                    : selected.transcript_raw
-                }
+                key={selected.id}
+                defaultValue={selected.transcript_raw}
                 readOnly
                 className="text-[15px] leading-relaxed min-h-[260px] border-0 bg-transparent resize-none focus-visible:ring-0 focus-visible:ring-offset-0 p-6"
               />
@@ -694,97 +534,9 @@ export function CapturesTab() {
 
             {/* Bottom actions */}
             <div className="flex items-center gap-2 mt-4 flex-wrap">
-              <div className="inline-flex">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handlePlayAs()}
-                  disabled={!playAsVoice || playAsMutation.isPending}
-                  className={cn(
-                    'gap-2 rounded-r-none border-r-0 pr-3 pl-2 transition-colors',
-                    playbackState !== 'idle' &&
-                      'border-accent/50 text-foreground bg-accent/10 hover:bg-accent/15 hover:text-foreground hover:border-accent/50',
-                  )}
-                >
-                  {playbackState === 'generating' ? (
-                    <>
-                      <AudioBars mode="generating" className="h-3.5" />
-                      {t('captures.actions.playAsGenerating')}
-                    </>
-                  ) : playbackState === 'playing' ? (
-                    <>
-                      <Square className="h-3 w-3 fill-current" />
-                      {playAsVoice
-                        ? t('captures.actions.playAsStop', { name: playAsVoice.name })
-                        : t('captures.actions.playAsStopFallback')}
-                    </>
-                  ) : (
-                    <>
-                      <Volume2 className="h-3.5 w-3.5" />
-                      {playAsVoice
-                        ? t('captures.actions.playAs', { name: playAsVoice.name })
-                        : t('captures.actions.playAsFallback')}
-                    </>
-                  )}
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className={cn(
-                        'rounded-l-none px-2 transition-colors',
-                        playbackState !== 'idle' &&
-                          'border-accent/50 bg-accent/10 hover:bg-accent/15 hover:text-foreground hover:border-accent/50',
-                      )}
-                      disabled={!profiles || !profiles.length}
-                    >
-                      <ChevronDown className="h-3.5 w-3.5 opacity-70" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-64">
-                    <DropdownMenuLabel className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                      {t('captures.actions.playAsDropdownLabel')}
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {profiles?.map((v) => (
-                      <DropdownMenuItem
-                        key={v.id}
-                        onClick={() => handlePlayAs(v)}
-                        className="py-2"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{v.name}</div>
-                          <div className="text-[11px] text-muted-foreground truncate">
-                            {v.description || v.language.toUpperCase()}
-                          </div>
-                        </div>
-                        {v.id === playAsVoiceId && (
-                          <Check className="h-3.5 w-3.5 text-accent shrink-0" />
-                        )}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
               <Button variant="outline" size="sm" onClick={handleCopy}>
                 <Copy className="h-3.5 w-3.5 mr-1.5" />
                 {t('captures.actions.copy')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => session.refine(selected.id)}
-                disabled={session.isRefining}
-              >
-                {session.isRefining ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                {selected.transcript_refined
-                  ? t('captures.actions.reRefine')
-                  : t('captures.actions.refine')}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

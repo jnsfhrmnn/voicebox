@@ -5,15 +5,15 @@ import type { PlatformLifecycle, ServerLogEntry } from '@/platform/types';
 class TauriLifecycle implements PlatformLifecycle {
   onServerReady?: () => void;
 
-  async startServer(remote = false, modelsDir?: string | null): Promise<string> {
+  async startServer(modelsDir?: string | null): Promise<void> {
     try {
-      const result = await invoke<string>('start_server', {
-        remote,
+      // JFW-1: Das Kommando liefert keinen Port/keine URL — die Webview darf
+      // weder Port noch Token sehen. Ready = Resolve des Promises.
+      await invoke('start_server', {
         modelsDir: modelsDir ?? undefined,
       });
-      console.log('Server started:', result);
+      console.log('Server started');
       this.onServerReady?.();
-      return result;
     } catch (error) {
       console.error('Failed to start server:', error);
       throw error;
@@ -30,14 +30,13 @@ class TauriLifecycle implements PlatformLifecycle {
     }
   }
 
-  async restartServer(modelsDir?: string | null): Promise<string> {
+  async restartServer(modelsDir?: string | null): Promise<void> {
     try {
-      const result = await invoke<string>('restart_server', {
+      await invoke('restart_server', {
         modelsDir: modelsDir ?? undefined,
       });
-      console.log('Server restarted:', result);
+      console.log('Server restarted');
       this.onServerReady?.();
-      return result;
     } catch (error) {
       console.error('Failed to restart server:', error);
       throw error;

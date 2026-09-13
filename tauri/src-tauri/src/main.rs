@@ -13,6 +13,7 @@ mod input_monitoring;
 mod key_codes;
 mod keyboard_layout;
 mod speak_monitor;
+mod sidecar;
 mod synthetic_keys;
 
 use std::sync::Mutex;
@@ -160,41 +161,6 @@ fn find_voicebox_pid_on_port(port: u16) -> Option<u32> {
     None
 }
 
-/// Check if a Voicebox server is responding on the given port.
-///
-/// Sends an HTTP GET to `/health` and returns `true` only if the response
-/// is valid JSON matching the Voicebox `HealthResponse` schema — specifically
-/// `status` must be `"healthy"`, and both `model_loaded` and `gpu_available`
-/// must be present as booleans. This prevents misidentifying an unrelated
-/// service that happens to expose a `/health` endpoint.
-#[allow(dead_code)] // Used in platform-specific cfg blocks
-fn check_health(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{}/health", port);
-    match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(client) => match client.get(&url).send() {
-            Ok(resp) => {
-                if !resp.status().is_success() {
-                    return false;
-                }
-                // Parse as JSON and validate Voicebox-specific fields
-                match resp.json::<serde_json::Value>() {
-                    Ok(body) => {
-                        body.get("status").and_then(|v| v.as_str()) == Some("healthy")
-                            && body.get("model_loaded").map(|v| v.is_boolean()).unwrap_or(false)
-                            && body.get("gpu_available").map(|v| v.is_boolean()).unwrap_or(false)
-                    }
-                    Err(_) => false,
-                }
-            }
-            Err(_) => false,
-        },
-        Err(_) => false,
-    }
-}
-
 struct ServerState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     server_pid: Mutex<Option<u32>>,
@@ -202,20 +168,19 @@ struct ServerState {
     models_dir: Mutex<Option<String>>,
     /// JFW-1: pro Start erzeugtes Bearer-Token. Bleibt im Rust-RAM, wird nie an
     /// Webviews oder Logs ausgegeben; der Sidecar bekommt es nur per Umgebung.
-    api_token: Mutex<Option<String>>,
+    pub(crate) api_token: Mutex<Option<String>>,
     /// JFW-1: Generationennummer des aktiven Sidecars (Channel-Bindung).
-    generation: Mutex<u64>,
+    pub(crate) generation: Mutex<u64>,
     /// JFW-1: vom Sidecar im Ready-Handshake gemeldeter dynamischer Port.
-    sidecar_port: Mutex<Option<u16>>,
+    pub(crate) sidecar_port: Mutex<Option<u16>>,
 }
 
 #[command]
 async fn start_server(
     app: tauri::AppHandle,
     state: State<'_, ServerState>,
-    remote: Option<bool>,
     models_dir: Option<String>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     // Store models_dir for use on restart (empty string means reset to default)
     if let Some(ref dir) = models_dir {
         if dir.is_empty() {
@@ -226,8 +191,9 @@ async fn start_server(
     }
     // Check if server is already running (managed by this app instance)
     if state.child.lock().unwrap().is_some() {
-        let port = *state.sidecar_port.lock().unwrap();
-        return Ok(format!("http://127.0.0.1:{}", port.unwrap_or(SERVER_PORT)));
+        // JFW-1: Der Port bleibt im Rust-State; die Webview bekommt nur den
+        // Start-Bestatigungs-Marker, nie eine URL.
+        return Ok(());
     }
 
     // JFW-1: kein Wiederverwenden fremder Server mehr. Der Sidecar bindet einen
@@ -313,7 +279,6 @@ async fn start_server(
     println!("=================================================================");
     println!("Starting voicebox-server sidecar");
     println!("Data directory: {:?}", data_dir);
-    println!("Remote mode: {}", remote.unwrap_or(false));
 
     // Check for CUDA backend in data directory (onedir layout: backends/cuda/)
     let cuda_binary = {
@@ -377,17 +342,8 @@ async fn start_server(
             // In dev mode, check if the server is already running (started manually)
             #[cfg(debug_assertions)]
             {
-                eprintln!("Dev mode: Checking if server is already running on port {}...", SERVER_PORT);
-
-                // Try to connect to the server port
-                use std::net::TcpStream;
-                if TcpStream::connect_timeout(
-                    &format!("127.0.0.1:{}", SERVER_PORT).parse().unwrap(),
-                    std::time::Duration::from_secs(1),
-                ).is_ok() {
-                    println!("Found server already running on port {}", SERVER_PORT);
-                    return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-                }
+                // JFW-1: Fremdprozess-Adoption entfernt — ein manuell gestarteter
+                // Server wird nicht uebernommen (Spec: kein Health-Payload-Reuse).
 
                 eprintln!("");
                 eprintln!("=================================================================");
@@ -431,7 +387,6 @@ async fn start_server(
     // waehlen; der Sidecar meldet den echten Wert im Ready-Handshake zurueck.
     let port_str = "0".to_string();
     let parent_pid_str = std::process::id().to_string();
-    let is_remote = remote.unwrap_or(false);
 
     // Resolve the custom models directory from the parameter or stored state
     let effective_models_dir = models_dir.or_else(|| state.models_dir.lock().unwrap().clone());
@@ -448,9 +403,6 @@ async fn start_server(
         let mut cmd = app.shell().command(cuda_path.to_str().unwrap());
         cmd = cmd.current_dir(cuda_dir);
         cmd = cmd.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
-        if is_remote {
-            cmd = cmd.args(["--host", "0.0.0.0"]);
-        }
         if let Some(ref dir) = effective_models_dir {
             cmd = cmd.env("VOICEBOX_MODELS_DIR", dir);
         }
@@ -459,9 +411,6 @@ async fn start_server(
     } else {
         // Use the bundled CPU sidecar
         sidecar = sidecar.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
-        if is_remote {
-            sidecar = sidecar.args(["--host", "0.0.0.0"]);
-        }
         if let Some(ref dir) = effective_models_dir {
             sidecar = sidecar.env("VOICEBOX_MODELS_DIR", dir);
         }
@@ -478,14 +427,7 @@ async fn start_server(
             // In dev mode, check if a manually-started server is available
             #[cfg(debug_assertions)]
             {
-                use std::net::TcpStream;
-                if TcpStream::connect_timeout(
-                    &format!("127.0.0.1:{}", SERVER_PORT).parse().unwrap(),
-                    std::time::Duration::from_secs(1),
-                ).is_ok() {
-                    println!("Found manually-started server on port {}", SERVER_PORT);
-                    return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-                }
+                // JFW-1: Fremdprozess-Adoption entfernt (Spec).
 
                 eprintln!("");
                 eprintln!("=================================================================");
@@ -534,20 +476,7 @@ async fn start_server(
                 }
             }
 
-            // In dev mode, check if a manual server came up during the wait
-            #[cfg(debug_assertions)]
-            {
-                use std::net::TcpStream;
-                if TcpStream::connect_timeout(
-                    &format!("127.0.0.1:{}", SERVER_PORT).parse().unwrap(),
-                    std::time::Duration::from_secs(1),
-                ).is_ok() {
-                    // Kill the placeholder process
-                    let _ = state.child.lock().unwrap().take();
-                    println!("Found manually-started server on port {}", SERVER_PORT);
-                    return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-                }
-            }
+            // JFW-1: Kein Adoption-Fallback — Timeout bleibt Fehler.
 
             return Err("Server startup timeout - check Console.app for detailed logs".to_string());
         }
@@ -606,20 +535,10 @@ async fn start_server(
                 // In dev mode, this is expected when using the placeholder binary
                 #[cfg(debug_assertions)]
                 {
-                    use std::net::TcpStream;
                     eprintln!("Server process ended (dev mode placeholder detected)");
-
-                    // Check if a manually-started server is available
-                    if TcpStream::connect_timeout(
-                        &format!("127.0.0.1:{}", SERVER_PORT).parse().unwrap(),
-                        std::time::Duration::from_secs(1),
-                    ).is_ok() {
-                        // Clean up state
-                        let _ = state.child.lock().unwrap().take();
-                        let _ = state.server_pid.lock().unwrap().take();
-                        println!("Found manually-started server on port {}", SERVER_PORT);
-                        return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
-                    }
+                    // JFW-1: Kein Adoption-Fallback — der manuell gestartete Server
+                    // wird nicht uebernommen; die Webview spricht ihn im Dev-Modus
+                    // direkt an, Rust startet hier nichts.
 
                     eprintln!("");
                     eprintln!("=================================================================");
@@ -673,8 +592,9 @@ async fn start_server(
         }
     });
 
-    let port = *state.sidecar_port.lock().unwrap();
-    Ok(format!("http://127.0.0.1:{}", port.unwrap_or(SERVER_PORT)))
+    // JFW-1: Port/Token bleiben im Rust-State (sidecar.rs liest sie fuer die
+    // typisierten Kommandos). Die Webview bekommt nur den Bestaetigungs-Marker.
+    Ok(())
 }
 
 #[command]
@@ -735,7 +655,7 @@ async fn restart_server(
     app: tauri::AppHandle,
     state: State<'_, ServerState>,
     models_dir: Option<String>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     println!("restart_server: stopping current server...");
 
     // Update stored models_dir: empty string means reset to default, non-empty means set
@@ -756,7 +676,7 @@ async fn restart_server(
 
     // Start server again (will auto-detect CUDA binary and use stored models_dir)
     println!("restart_server: starting server...");
-    start_server(app, state, None, None).await
+    start_server(app, state, None).await
 }
 
 #[command]
@@ -1240,7 +1160,8 @@ pub fn run() {
         .setup(|app| {
             #[cfg(desktop)]
             {
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                // JFW-1: Updater ist aus dem Produktprofil entfernt (updater_enabled=false) —
+                // kein Update-Kanal, keine Fremdserver-Wiederverwendung.
                 app.handle().plugin(tauri_plugin_process::init())?;
 
                 // Resolve the active keyboard layout's V keycode now, on
@@ -1369,7 +1290,11 @@ pub fn run() {
             paste_final_text,
             enable_hotkey,
             disable_hotkey,
-            update_chord_bindings
+            update_chord_bindings,
+            sidecar::sidecar_request,
+            sidecar::sidecar_upload,
+            sidecar::sidecar_fetch_bytes,
+            sidecar::sidecar_stream
         ])
         .on_window_event({
             let closing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

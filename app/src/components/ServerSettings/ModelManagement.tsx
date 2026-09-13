@@ -406,24 +406,11 @@ export function ModelManagement() {
     setDetailOpen(true);
   };
 
-  const voiceModels =
-    modelStatus?.models.filter(
-      (m) =>
-        m.model_name.startsWith('qwen-tts') ||
-        m.model_name.startsWith('qwen-custom-voice') ||
-        m.model_name.startsWith('luxtts') ||
-        m.model_name.startsWith('chatterbox') ||
-        m.model_name.startsWith('tada') ||
-        m.model_name.startsWith('kokoro'),
-    ) ?? [];
   const whisperModels = modelStatus?.models.filter((m) => m.model_name.startsWith('whisper')) ?? [];
-  const llmModels = modelStatus?.models.filter((m) => m.model_name.startsWith('qwen3-')) ?? [];
 
-  // Build sections
+  // JFW-1: Transkriptionsprofil — nur Sektionen mit Modellen anzeigen.
   const sections: { label: string; models: ModelStatus[] }[] = [
-    { label: t('models.sections.voiceGeneration'), models: voiceModels },
     { label: t('models.sections.transcription'), models: whisperModels },
-    { label: t('models.sections.languageModels'), models: llmModels },
   ];
 
   // Get detail modal state for selected model
@@ -1015,28 +1002,42 @@ export function ModelManagement() {
                     return;
                   }
 
-                  // Connect to SSE for progress
+                  // Connect to SSE for progress (JFW-1: ueber Sidecar-Transport)
                   await new Promise<void>((resolve, reject) => {
-                    const es = new EventSource(apiClient.getMigrationProgressUrl());
-                    es.onmessage = (event) => {
-                      try {
-                        const data = JSON.parse(event.data);
-                        setMigrationProgress(data);
-                        if (data.status === 'complete') {
-                          es.close();
-                          resolve();
-                        } else if (data.status === 'error') {
-                          es.close();
-                          reject(new Error(data.error || t('models.toast.migrationFailed')));
+                    let closed = false;
+                    let closeFn: () => void = () => {};
+                    const close = () => {
+                      if (closed) return;
+                      closed = true;
+                      closeFn();
+                    };
+                    apiClient.streamProgress(
+                      '/models/migrate/progress',
+                      (data) => {
+                        try {
+                          const parsed = JSON.parse(data);
+                          setMigrationProgress(parsed);
+                          if (parsed.status === 'complete') {
+                            close();
+                            resolve();
+                          } else if (parsed.status === 'error') {
+                            close();
+                            reject(new Error(parsed.error || t('models.toast.migrationFailed')));
+                          }
+                        } catch {
+                          /* ignore parse errors */
                         }
-                      } catch {
-                        /* ignore parse errors */
-                      }
-                    };
-                    es.onerror = () => {
-                      es.close();
-                      reject(new Error(t('models.toast.migrationConnectionLost')));
-                    };
+                      },
+                      () => {
+                        // Stream-Abriss (Sidecarwechsel/Verbindung) — fail-closed.
+                        close();
+                        reject(new Error(t('models.toast.migrationConnectionLost')));
+                      },
+                    )
+                      .then((s) => {
+                        closeFn = s.close;
+                      })
+                      .catch(reject);
                   });
 
                   setCustomModelsDir(newDir);

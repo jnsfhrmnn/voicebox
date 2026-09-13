@@ -1,4 +1,4 @@
-import { Check, ChevronDown, FolderOpen, Info, Keyboard, Laptop, Lock, Volume2 } from 'lucide-react';
+import { FolderOpen, Info, Keyboard, Laptop, Lock } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AccessibilityNotice } from '@/components/AccessibilityGate/AccessibilityGate';
@@ -7,14 +7,6 @@ import { CapturePill, type PillState } from '@/components/CapturePill/CapturePil
 import { DictationReadinessChecklist } from '@/components/CapturesTab/DictationReadinessChecklist';
 import { ChordPicker } from '@/components/ChordPicker/ChordPicker';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -26,12 +18,11 @@ import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/use-toast';
 import { useDictationReadiness } from '@/lib/hooks/useDictationReadiness';
 import { useCaptureSettings } from '@/lib/hooks/useSettings';
-import { useProfiles } from '@/lib/hooks/useProfiles';
+import { apiClient } from '@/lib/api/client';
 import { usePlatform } from '@/platform/PlatformContext';
-import { useServerStore } from '@/stores/serverStore';
 import { cn } from '@/lib/utils/cn';
 import { defaultChordKeys, displayLabelForKey, modifierSideHint } from '@/lib/utils/keyCodes';
-import type { Qwen3ModelSize, VoiceProfileResponse, WhisperModelSize } from '@/lib/api/types';
+import type { WhisperModelSize } from '@/lib/api/types';
 import { SettingRow, SettingSection } from './SettingRow';
 
 function ChordPreview({ keys }: { keys: string[] }) {
@@ -64,11 +55,10 @@ function ChordPreview({ keys }: { keys: string[] }) {
 const isWindows =
   typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
 
-const PILL_SEQUENCE: PillState[] = ['recording', 'transcribing', 'refining', 'rest'];
+const PILL_SEQUENCE: PillState[] = ['recording', 'transcribing', 'rest'];
 const PILL_DURATIONS: Partial<Record<PillState, number>> = {
   recording: 2600,
   transcribing: 1500,
-  refining: 1500,
   rest: 900,
 };
 
@@ -76,7 +66,7 @@ function HotkeyPillPreview({ enabled }: { enabled: boolean }) {
   const [state, setState] = useState<PillState>('recording');
   const [tick, setTick] = useState(0);
 
-  // Cycle recording → transcribing → refining → rest → …
+  // Cycle recording → transcribing → rest → …
   useEffect(() => {
     const t = window.setTimeout(() => {
       const next = PILL_SEQUENCE[(PILL_SEQUENCE.indexOf(state) + 1) % PILL_SEQUENCE.length];
@@ -123,20 +113,12 @@ function HotkeyPillPreview({ enabled }: { enabled: boolean }) {
 export function CapturesPage() {
   const { t } = useTranslation();
   const platform = usePlatform();
-  const serverUrl = useServerStore((state) => state.serverUrl);
   const { settings, update } = useCaptureSettings();
-  const { data: profiles } = useProfiles();
   const { toast } = useToast();
   const readiness = useDictationReadiness();
   const sttModel = settings?.stt_model ?? 'turbo';
   const language = settings?.language ?? 'auto';
-  const autoRefine = settings?.auto_refine ?? true;
-  const llmModel = settings?.llm_model ?? '0.6B';
-  const smartCleanup = settings?.smart_cleanup ?? true;
-  const selfCorrection = settings?.self_correction ?? true;
-  const preserveTechnical = settings?.preserve_technical ?? true;
   const allowAutoPaste = settings?.allow_auto_paste ?? true;
-  const defaultVoiceId = settings?.default_playback_voice_id ?? null;
   const hotkeyEnabled = settings?.hotkey_enabled ?? false;
   const pushToTalkKeys = settings?.chord_push_to_talk_keys ?? defaultChordKeys('push');
   const toggleToTalkKeys = settings?.chord_toggle_to_talk_keys ?? defaultChordKeys('toggle');
@@ -146,8 +128,9 @@ export function CapturesPage() {
   const [capturesPath, setCapturesPath] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${serverUrl}/health/filesystem`)
-      .then((res) => res.json())
+    // JFW-1: ueber den Sidecar-Transport (Auth/Generation).
+    apiClient
+      .getHealthFilesystem()
       .then((data) => {
         const dir = data.directories?.find((d: { path: string }) =>
           d.path.includes('captures'),
@@ -155,7 +138,7 @@ export function CapturesPage() {
         if (dir?.path) setCapturesPath(dir.path);
       })
       .catch(() => {});
-  }, [serverUrl]);
+  }, []);
 
   const openCapturesFolder = useCallback(async () => {
     if (!capturesPath) return;
@@ -168,10 +151,6 @@ export function CapturesPage() {
       setOpening(false);
     }
   }, [platform, capturesPath]);
-
-  const voices: VoiceProfileResponse[] = profiles ?? [];
-  const defaultVoice =
-    voices.find((v) => v.id === defaultVoiceId) ?? null;
 
   return (
     <div className="flex gap-8 items-start max-w-5xl">
@@ -369,151 +348,6 @@ export function CapturesPage() {
       </SettingSection>
 
       <SettingSection
-        title={t('settings.captures.refinement.title')}
-        description={t('settings.captures.refinement.description')}
-      >
-        <SettingRow
-          title={t('settings.captures.refinement.auto.title')}
-          description={t('settings.captures.refinement.auto.description')}
-          htmlFor="autoRefine"
-          action={
-            <Toggle
-              id="autoRefine"
-              checked={autoRefine}
-              onCheckedChange={(v) => update({ auto_refine: v })}
-            />
-          }
-        />
-
-        <SettingRow
-          title={t('settings.captures.refinement.model.title')}
-          description={t('settings.captures.refinement.model.description')}
-          action={
-            <Select
-              value={llmModel}
-              onValueChange={(v) => update({ llm_model: v as Qwen3ModelSize })}
-              disabled={!autoRefine}
-            >
-              <SelectTrigger className="w-[260px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0.6B">
-                  {t('settings.captures.refinement.model.size06', { tail: t('settings.captures.refinement.model.tail.veryFast') })}
-                </SelectItem>
-                <SelectItem value="1.7B">
-                  {t('settings.captures.refinement.model.size17', { tail: t('settings.captures.refinement.model.tail.fast') })}
-                </SelectItem>
-                <SelectItem value="4B">
-                  {t('settings.captures.refinement.model.size40', { tail: t('settings.captures.refinement.model.tail.fullQuality') })}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          }
-        />
-
-        <SettingRow
-          title={t('settings.captures.refinement.smartCleanup.title')}
-          description={t('settings.captures.refinement.smartCleanup.description')}
-          htmlFor="smartCleanup"
-          action={
-            <Toggle
-              id="smartCleanup"
-              checked={smartCleanup}
-              onCheckedChange={(v) => update({ smart_cleanup: v })}
-              disabled={!autoRefine}
-            />
-          }
-        />
-
-        <SettingRow
-          title={t('settings.captures.refinement.selfCorrection.title')}
-          description={t('settings.captures.refinement.selfCorrection.description')}
-          htmlFor="selfCorrection"
-          action={
-            <Toggle
-              id="selfCorrection"
-              checked={selfCorrection}
-              onCheckedChange={(v) => update({ self_correction: v })}
-              disabled={!autoRefine}
-            />
-          }
-        />
-
-        <SettingRow
-          title={t('settings.captures.refinement.preserveTechnical.title')}
-          description={t('settings.captures.refinement.preserveTechnical.description')}
-          htmlFor="preserveTechnical"
-          action={
-            <Toggle
-              id="preserveTechnical"
-              checked={preserveTechnical}
-              onCheckedChange={(v) => update({ preserve_technical: v })}
-              disabled={!autoRefine}
-            />
-          }
-        />
-      </SettingSection>
-
-      <SettingSection
-        title={t('settings.captures.playback.title')}
-        description={t('settings.captures.playback.description')}
-      >
-        <SettingRow
-          title={t('settings.captures.playback.defaultVoice.title')}
-          description={t('settings.captures.playback.defaultVoice.description')}
-          action={
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 min-w-[220px] justify-between"
-                  disabled={voices.length === 0}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    {defaultVoice ? (
-                      <span className="truncate">{defaultVoice.name}</span>
-                    ) : (
-                      <span className="truncate text-muted-foreground">
-                        {voices.length === 0
-                          ? t('settings.captures.playback.defaultVoice.noClonedVoices')
-                          : t('settings.captures.playback.defaultVoice.noneSelected')}
-                      </span>
-                    )}
-                  </div>
-                  <ChevronDown className="h-3.5 w-3.5 opacity-60 shrink-0" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                  {t('settings.captures.playback.defaultVoice.clonedVoices')}
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {voices.map((v) => (
-                  <DropdownMenuItem
-                    key={v.id}
-                    onClick={() => update({ default_playback_voice_id: v.id })}
-                    className="gap-2.5 py-2"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{v.name}</div>
-                      {v.description ? (
-                        <div className="text-[11px] text-muted-foreground truncate">
-                          {v.description}
-                        </div>
-                      ) : null}
-                    </div>
-                    {v.id === defaultVoiceId && <Check className="h-3.5 w-3.5 text-accent shrink-0" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          }
-        />
-      </SettingSection>
-
-      <SettingSection
         title={t('settings.captures.storage.title')}
         description={t('settings.captures.storage.description')}
       >
@@ -551,15 +385,6 @@ export function CapturesPage() {
               <span className="leading-relaxed">
                 <span className="text-foreground font-medium">{t('settings.captures.sidebar.local.title')}</span>{' '}
                 {t('settings.captures.sidebar.local.body')}
-              </span>
-            </li>
-            <li className="flex gap-2.5">
-              <Volume2 className="h-4 w-4 shrink-0 mt-0.5 text-accent" />
-              <span className="leading-relaxed">
-                <span className="text-foreground font-medium">
-                  {t('settings.captures.sidebar.playAs.title')}
-                </span>{' '}
-                {t('settings.captures.sidebar.playAs.body')}
               </span>
             </li>
             <li className="flex gap-2.5">

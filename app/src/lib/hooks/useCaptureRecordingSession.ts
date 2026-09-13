@@ -28,12 +28,6 @@ function broadcastCreated(capture: CaptureResponse) {
   });
 }
 
-function broadcastUpdated(id: string) {
-  tauriEmit('capture:updated', { id }).catch(() => {
-    /* not running inside Tauri; nothing to sync to */
-  });
-}
-
 const REST_FADE_MS = 900;
 // How long the green "Done" pill stays visible after refine (or transcribe,
 // when auto-refine is off) completes, before the fade-out begins.
@@ -81,31 +75,32 @@ export interface UseCaptureRecordingSessionResult {
   errorMessage: string | null;
   isRecording: boolean;
   isUploading: boolean;
-  isRefining: boolean;
   startRecording: () => void;
   stopRecording: () => void;
   toggleRecording: () => void;
   dismissError: () => void;
   uploadFile: (file: File, source: CaptureSource) => void;
-  refine: (captureId: string) => void;
 }
 
 /**
- * Owns the full record → transcribe → refine → rest lifecycle behind the
- * capture pill. The pill component and the Dictate/Stop button are the only
- * consumers; everything else (cache seeding, error toasts, settings reads) is
- * internal so the hook can be reused from a floating Tauri window without the
+ * Owns the full record → transcribe → rest lifecycle behind the capture pill.
+ * The pill component and the Dictate/Stop button are the only consumers;
+ * everything else (cache seeding, error toasts, settings reads) is internal
+ * so the hook can be reused from a floating Tauri window without the
  * containing tab.
+ *
+ * jf-whisper-Profil: Capture-Refinement ist ein LLM-Feature und nicht
+ * routbar — die finale Diktationstextlieferung kommt direkt aus dem
+ * unveränderten STT-Transkript (``transcript_raw``).
  */
 export function useCaptureRecordingSession(
   options: UseCaptureRecordingSessionOptions = {},
 ): UseCaptureRecordingSessionResult {
   const queryClient = useQueryClient();
-  // Every capture setting is resolved server-side. ``stt_model``,
-  // ``llm_model`` and refine flags are read from the capture_settings table
-  // inside POST /captures and /captures/*/refine, and ``auto_refine`` comes
-  // back on the create response so the client decides whether to chain a
-  // refine call using a value that can't go stale across sibling webviews.
+  // Every capture setting is resolved server-side. ``stt_model`` comes from
+  // the capture_settings table inside POST /captures; ``allow_auto_paste``
+  // comes back on the create response so the client decides whether to hand
+  // the text off to the Rust auto-paste pipeline.
 
   const [pillState, setPillState] = useState<CapturePillState>('hidden');
   const [frozenElapsedMs, setFrozenElapsedMs] = useState(0);
@@ -122,11 +117,6 @@ export function useCaptureRecordingSession(
 
   const onFinalTextRef = useRef(options.onFinalText);
   onFinalTextRef.current = options.onFinalText;
-
-  // Snapshot of ``allow_auto_paste`` from the capture-create response —
-  // held so the refine onSuccess (which only sees the plain CaptureResponse)
-  // can still pass the original setting through to onFinalText.
-  const allowAutoPasteRef = useRef<boolean>(true);
 
   const clearRestTimer = useCallback(() => {
     if (restTimerRef.current !== null) {
@@ -185,23 +175,6 @@ export function useCaptureRecordingSession(
     [clearRestTimer, clearErrorTimer],
   );
 
-  const refineMutation = useMutation({
-    // Empty body — backend resolves flags and model from capture_settings.
-    mutationFn: async (captureId: string) => apiClient.refineCapture(captureId, {}),
-    onSuccess: (data, captureId) => {
-      queryClient.invalidateQueries({ queryKey: ['captures'] });
-      broadcastUpdated(captureId);
-      if (pillStateRef.current === 'refining') scheduleHidePill();
-      const finalText = data.transcript_refined ?? data.transcript_raw;
-      if (finalText) {
-        onFinalTextRef.current?.(finalText, data, allowAutoPasteRef.current);
-      }
-    },
-    onError: (err: Error) => {
-      showError(err.message || 'Refinement failed');
-    },
-  });
-
   const uploadMutation = useMutation({
     mutationFn: async ({ file, source }: { file: File; source: CaptureSource }) =>
       apiClient.createCapture(file, { source }),
@@ -214,19 +187,15 @@ export function useCaptureRecordingSession(
       queryClient.invalidateQueries({ queryKey: ['captures'] });
       broadcastCreated(capture);
       onCaptureCreatedRef.current?.(capture);
-      allowAutoPasteRef.current = capture.allow_auto_paste;
-      if (capture.auto_refine) {
-        setPillState('refining');
-        refineMutation.mutate(capture.id);
-      } else {
-        if (pillStateRef.current === 'transcribing') scheduleHidePill();
-        if (capture.transcript_raw) {
-          onFinalTextRef.current?.(
-            capture.transcript_raw,
-            capture,
-            capture.allow_auto_paste,
-          );
-        }
+      // jf-whisper-Profil: kein Refinement — das unveränderte STT-Transkript
+      // ist der finale Diktationstext.
+      if (pillStateRef.current === 'transcribing') scheduleHidePill();
+      if (capture.transcript_raw) {
+        onFinalTextRef.current?.(
+          capture.transcript_raw,
+          capture,
+          capture.allow_auto_paste,
+        );
       }
     },
     onError: (err: Error) => {
@@ -301,13 +270,6 @@ export function useCaptureRecordingSession(
     [uploadMutation],
   );
 
-  const refine = useCallback(
-    (captureId: string) => {
-      refineMutation.mutate(captureId);
-    },
-    [refineMutation],
-  );
-
   const pillElapsedMs =
     pillState === 'recording' ? Math.round(duration * 1000) : frozenElapsedMs;
 
@@ -317,12 +279,10 @@ export function useCaptureRecordingSession(
     errorMessage,
     isRecording,
     isUploading: uploadMutation.isPending,
-    isRefining: refineMutation.isPending,
     startRecording,
     stopRecording,
     toggleRecording,
     dismissError,
     uploadFile,
-    refine,
   };
 }

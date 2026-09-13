@@ -56,9 +56,9 @@ export interface ServerLogEntry {
 }
 
 export interface PlatformLifecycle {
-  startServer(remote?: boolean, modelsDir?: string | null): Promise<string>;
+  startServer(modelsDir?: string | null): Promise<void>;
   stopServer(): Promise<void>;
-  restartServer(modelsDir?: string | null): Promise<string>;
+  restartServer(modelsDir?: string | null): Promise<void>;
   setKeepServerRunning(keep: boolean): Promise<void>;
   setupWindowCloseHandler(): Promise<void>;
   subscribeToServerLogs(callback: (entry: ServerLogEntry) => void): () => void;

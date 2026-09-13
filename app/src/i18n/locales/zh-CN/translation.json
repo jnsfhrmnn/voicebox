@@ -30,7 +30,7 @@
     "noTranscriptError": "此次捕获尚无转录文本",
     "captureCardLabel": "捕获 · {{when}}",
     "header": {
-      "modelSummary": "Whisper {{stt}} · Qwen3 · {{llm}}"
+      "modelSummary": "Whisper {{stt}}"
     },
     "source": {
       "dictation": "听写",
@@ -760,8 +760,13 @@
       }
     },
     "general": {
-      "docs": { "title": "阅读文档" },
-      "discord": { "title": "加入 Discord", "subtitle": "获取帮助 & 分享声音" },
+      "docs": {
+        "title": "阅读文档"
+      },
+      "discord": {
+        "title": "加入 Discord",
+        "subtitle": "获取帮助 & 分享声音"
+      },
       "serverUrl": {
         "title": "服务器 URL",
         "description": "Voicebox 后端服务器的地址。",

@@ -1,17 +1,14 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, Cpu, Download, Loader2, RotateCw, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Cpu } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { apiClient } from '@/lib/api/client';
-import type { CudaDownloadProgress, HealthResponse } from '@/lib/api/types';
+import type { HealthResponse } from '@/lib/api/types';
 import { useServerHealth } from '@/lib/hooks/useServer';
-import { usePlatform } from '@/platform/PlatformContext';
-import { useServerStore } from '@/stores/serverStore';
-import { SettingRow, SettingSection } from './SettingRow';
 
-type RestartPhase = 'idle' | 'stopping' | 'waiting' | 'ready';
+/**
+ * jf-whisper-Profil: read-only GPU-Info. Der Voicebox-CUDA-Download, die
+ * Runtime-Installation und der CUDA-Switch sind bis JFW-12 aus dem aktiven
+ * Produktprofil entfernt (verbotener cuda-Router) — es bleibt nur die
+ * Health-basierte Beschleuniger-Anzeige.
+ */
 
 function AppleLogo({ className }: { className?: string }) {
   return (
@@ -48,7 +45,7 @@ function GpuInfoCard({ health }: { health: HealthResponse }) {
     ? health.gpu_type!.replace(/^(CUDA|ROCm|MPS|Metal|XPU|DirectML)\s*\((.+)\)$/, '$2') ||
       health.gpu_type!
     : null;
-  const gpuBackend = hasGpu ? health.gpu_type!.replace(/\s*\(.+\)$/, '') : null;
+  const gpuBackend = hasGpu ? health.gpu_type!.replace(/\s*\(.*\)$/, '') : null;
   const isApple = gpuBackend === 'MPS' || gpuBackend === 'Metal';
   const showBackendVariant = health.backend_variant && health.backend_variant !== 'cpu';
 
@@ -108,299 +105,13 @@ function GpuInfoCard({ health }: { health: HealthResponse }) {
 
 export function GpuPage() {
   const { t } = useTranslation();
-  const platform = usePlatform();
-  const queryClient = useQueryClient();
-  const serverUrl = useServerStore((state) => state.serverUrl);
   const { data: health } = useServerHealth();
 
-  const [restartPhase, setRestartPhase] = useState<RestartPhase>('idle');
-  const [error, setError] = useState<string | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<CudaDownloadProgress | null>(null);
-  const healthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Hold the latest `t` in a ref so the CUDA progress SSE effect below doesn't
-  // tear down and reconnect the EventSource every time the language changes.
-  const tRef = useRef(t);
-  useEffect(() => {
-    tRef.current = t;
-  }, [t]);
-
-  const {
-    data: cudaStatus,
-    isLoading: _cudaStatusLoading,
-    refetch: refetchCudaStatus,
-  } = useQuery({
-    queryKey: ['cuda-status', serverUrl],
-    queryFn: () => apiClient.getCudaStatus(),
-    refetchInterval: (query) => (query.state.status === 'pending' ? false : 10000),
-    retry: 1,
-    enabled: !!health,
-  });
-
-  const isCurrentlyCuda = health?.backend_variant === 'cuda';
-  const cudaAvailable = cudaStatus?.available ?? false;
-  const cudaDownloading = cudaStatus?.downloading ?? false;
-
-  useEffect(() => {
-    return () => {
-      if (healthPollRef.current) {
-        clearInterval(healthPollRef.current);
-        healthPollRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!cudaDownloading || !serverUrl) return;
-
-    const eventSource = new EventSource(`${serverUrl}/backend/cuda-progress`);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as CudaDownloadProgress;
-        setDownloadProgress(data);
-
-        if (data.status === 'complete') {
-          eventSource.close();
-          setDownloadProgress(null);
-          refetchCudaStatus();
-        } else if (data.status === 'error') {
-          eventSource.close();
-          setError(data.error || tRef.current('settings.gpu.errors.downloadFailed'));
-          setDownloadProgress(null);
-          refetchCudaStatus();
-        }
-      } catch (e) {
-        console.error('Error parsing CUDA progress event:', e);
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, [cudaDownloading, serverUrl, refetchCudaStatus]);
-
-  const clearHealthPolling = useCallback(() => {
-    if (healthPollRef.current) {
-      clearInterval(healthPollRef.current);
-      healthPollRef.current = null;
-    }
-  }, []);
-
-  const startHealthPolling = useCallback(() => {
-    clearHealthPolling();
-
-    healthPollRef.current = setInterval(async () => {
-      try {
-        const result = await apiClient.getHealth();
-        if (result.status === 'healthy') {
-          clearHealthPolling();
-          setRestartPhase('ready');
-          queryClient.invalidateQueries();
-          setTimeout(() => setRestartPhase('idle'), 2000);
-        }
-      } catch {
-        // Server still down, keep polling
-      }
-    }, 1000);
-  }, [queryClient, clearHealthPolling]);
-
-  const restartServerWithPolling = useCallback(
-    async (errorMessage: string) => {
-      setRestartPhase('stopping');
-      try {
-        await platform.lifecycle.restartServer();
-        setRestartPhase('waiting');
-        startHealthPolling();
-      } catch (e: unknown) {
-        clearHealthPolling();
-        setRestartPhase('idle');
-        throw new Error(e instanceof Error ? e.message : errorMessage);
-      }
-    },
-    [platform, startHealthPolling, clearHealthPolling],
-  );
-
-  const handleDownload = async () => {
-    setError(null);
-    try {
-      await apiClient.downloadCudaBackend();
-      refetchCudaStatus();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : t('settings.gpu.errors.downloadStart');
-      if (msg.includes('already downloaded')) {
-        refetchCudaStatus();
-      } else {
-        setError(msg);
-      }
-    }
-  };
-
-  const handleRestart = async () => {
-    setError(null);
-    try {
-      await restartServerWithPolling(t('settings.gpu.errors.restartFailed'));
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('settings.gpu.errors.restartFailed'));
-    }
-  };
-
-  const handleSwitchToCpu = async () => {
-    setError(null);
-    setRestartPhase('stopping');
-    try {
-      await apiClient.deleteCudaBackend();
-      await restartServerWithPolling(t('settings.gpu.errors.switchCpu'));
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('settings.gpu.errors.switchCpu'));
-      refetchCudaStatus();
-    }
-  };
-
-  const handleDelete = async () => {
-    setError(null);
-    try {
-      await apiClient.deleteCudaBackend();
-      refetchCudaStatus();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('settings.gpu.errors.deleteCuda'));
-    }
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${(bytes / k ** i).toFixed(1)} ${sizes[i]}`;
-  };
-
   if (!health) return null;
-
-  const hasNativeGpu =
-    health.gpu_available &&
-    !isCurrentlyCuda &&
-    health.gpu_type &&
-    !health.gpu_type.includes('CUDA');
 
   return (
     <div className="space-y-8 max-w-2xl">
       <GpuInfoCard health={health} />
-
-      {!hasNativeGpu && !isCurrentlyCuda && (
-        <SettingSection
-          title={t('settings.gpu.cuda.title')}
-          description={t('settings.gpu.cuda.description')}
-        >
-          {cudaDownloading && downloadProgress && (
-            <SettingRow title={t('settings.gpu.cuda.downloading')}>
-              <div className="space-y-1.5">
-                <Progress value={downloadProgress.progress} className="h-2" />
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>
-                    {downloadProgress.filename ||
-                      (cudaAvailable
-                        ? t('settings.gpu.cuda.updating')
-                        : t('settings.gpu.cuda.downloadingShort'))}
-                  </span>
-                  <span>
-                    {downloadProgress.total > 0
-                      ? `${formatBytes(downloadProgress.current)} / ${formatBytes(downloadProgress.total)}`
-                      : `${downloadProgress.progress.toFixed(1)}%`}
-                  </span>
-                </div>
-              </div>
-            </SettingRow>
-          )}
-
-          {restartPhase !== 'idle' && (
-            <SettingRow
-              title={
-                restartPhase === 'ready'
-                  ? t('settings.gpu.restart.ready')
-                  : restartPhase === 'waiting'
-                    ? t('settings.gpu.restart.waiting')
-                    : t('settings.gpu.restart.stopping')
-              }
-              action={<Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-            />
-          )}
-
-          {error && (
-            <SettingRow title={t('common.error')}>
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            </SettingRow>
-          )}
-
-          {restartPhase === 'idle' && !cudaDownloading && (
-            <>
-              {!cudaAvailable && !isCurrentlyCuda && (
-                <SettingRow
-                  title={t('settings.gpu.download.title')}
-                  description={t('settings.gpu.download.description')}
-                  action={
-                    <Button onClick={handleDownload} size="sm">
-                      <Download className="h-3.5 w-3.5 mr-1.5" />
-                      {t('settings.gpu.download.button')}
-                    </Button>
-                  }
-                />
-              )}
-
-              {cudaAvailable && !isCurrentlyCuda && platform.metadata.isTauri && (
-                <SettingRow
-                  title={t('settings.gpu.switchToCuda.title')}
-                  description={t('settings.gpu.switchToCuda.description')}
-                  action={
-                    <Button onClick={handleRestart} size="sm">
-                      <RotateCw className="h-3.5 w-3.5 mr-1.5" />
-                      {t('settings.gpu.switchToCuda.button')}
-                    </Button>
-                  }
-                />
-              )}
-
-              {isCurrentlyCuda && platform.metadata.isTauri && (
-                <SettingRow
-                  title={t('settings.gpu.switchToCpu.title')}
-                  description={t('settings.gpu.switchToCpu.description')}
-                  action={
-                    <Button onClick={handleSwitchToCpu} variant="outline" size="sm">
-                      <RotateCw className="h-3.5 w-3.5 mr-1.5" />
-                      {t('settings.gpu.switchToCpu.button')}
-                    </Button>
-                  }
-                />
-              )}
-
-              {cudaAvailable && !isCurrentlyCuda && (
-                <SettingRow
-                  title={t('settings.gpu.remove.title')}
-                  description={t('settings.gpu.remove.description')}
-                  action={
-                    <Button
-                      onClick={handleDelete}
-                      variant="ghost"
-                      size="sm"
-                      className="text-muted-foreground "
-                    >
-                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                      {t('settings.gpu.remove.button')}
-                    </Button>
-                  }
-                />
-              )}
-            </>
-          )}
-        </SettingSection>
-      )}
-
       <p className="text-xs text-muted-foreground/60 leading-relaxed">{t('settings.gpu.footer')}</p>
     </div>
   );

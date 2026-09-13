@@ -272,6 +272,21 @@ export interface HealthResponse {
   backend_variant?: string; // "cpu" or "cuda"
 }
 
+/** JFW-1: /health/filesystem — Verzeichnis-Checks des Sidecar. */
+export interface DirectoryCheck {
+  path: string;
+  exists: boolean;
+  writable: boolean;
+  error?: string | null;
+}
+
+export interface FilesystemHealthResponse {
+  healthy: boolean;
+  disk_free_mb?: number | null;
+  disk_total_mb?: number | null;
+  directories: DirectoryCheck[];
+}
+
 export interface CudaDownloadProgress {
   model_name: string;
   current: number;

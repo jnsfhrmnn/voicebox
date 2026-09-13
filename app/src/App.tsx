@@ -6,8 +6,6 @@ import ShinyText from '@/components/ShinyText';
 import { TitleBarDragRegion } from '@/components/TitleBarDragRegion';
 import { useAutoUpdater } from '@/hooks/useAutoUpdater';
 import { useThemeSync } from '@/hooks/useThemeSync';
-import { apiClient } from '@/lib/api/client';
-import type { HealthResponse } from '@/lib/api/types';
 import { useChordSync } from '@/lib/hooks/useChordSync';
 import { TOP_SAFE_AREA_PADDING } from '@/lib/constants/ui';
 import { cn } from '@/lib/utils/cn';
@@ -25,54 +23,14 @@ function isDictateView(): boolean {
   return new URLSearchParams(window.location.search).get('view') === 'dictate';
 }
 
-/**
- * Validate that a health response has the expected Voicebox-specific shape.
- * Prevents misidentifying an unrelated service on the same port.
- */
-function isVoiceboxHealthResponse(health: HealthResponse): boolean {
-  return (
-    health?.status === 'healthy' &&
-    typeof health.model_loaded === 'boolean' &&
-    typeof health.gpu_available === 'boolean'
-  );
-}
-
-/**
- * Check whether a startup error indicates the port is occupied by an external
- * server (which we should try to reuse via health-check polling) vs. a real
- * failure (missing sidecar, signing issue, etc.) that should surface immediately.
- */
-function isPortInUseError(error: unknown): boolean {
-  const msg = error instanceof Error ? error.message : String(error);
-  return (
-    msg.includes('already in use') ||
-    msg.includes('port') ||
-    msg.includes('EADDRINUSE') ||
-    msg.includes('address already in use')
-  );
-}
-
 const LOADING_MESSAGES = [
+  'Starting transcription sidecar...',
+  'Loading Whisper model...',
   'Warming up tensors...',
-  'Calibrating synthesizer engine...',
-  'Initializing voice models...',
-  'Loading neural networks...',
   'Preparing audio pipelines...',
-  'Optimizing waveform generators...',
-  'Tuning frequency analyzers...',
-  'Building voice embeddings...',
-  'Configuring text-to-speech cores...',
   'Syncing audio buffers...',
   'Establishing model connections...',
-  'Preprocessing training data...',
-  'Validating voice samples...',
-  'Compiling inference engines...',
-  'Mapping phoneme sequences...',
-  'Aligning prosody parameters...',
-  'Activating speech synthesis...',
-  'Fine-tuning acoustic models...',
-  'Preparing voice cloning matrices...',
-  'Initializing Qwen TTS framework...',
+  'Validating capture storage...',
 ];
 
 function App() {
@@ -165,16 +123,14 @@ function MainApp() {
     }
 
     serverStartingRef.current = true;
-    const isRemote = useServerStore.getState().mode === 'remote';
     const customModelsDir = useServerStore.getState().customModelsDir;
-    console.log(`Production mode: Starting bundled server... (remote: ${isRemote})`);
+    console.log('Production mode: Starting bundled server...');
 
+    // JFW-1: startServer liefert keinen Port/keine URL — die Webview kennt
+    // weder Port noch Token. Ready ist das Resolve des Promises selbst.
     platform.lifecycle
-      .startServer(isRemote, customModelsDir)
-      .then((serverUrl) => {
-        console.log('Server is ready at:', serverUrl);
-        // Update the server URL in the store with the dynamically assigned port
-        useServerStore.getState().setServerUrl(serverUrl);
+      .startServer(customModelsDir)
+      .then(() => {
         setServerReady(true);
         // Mark that we started the server (so we know to stop it on close)
         window.__voiceboxServerStartedByApp = true;
@@ -184,45 +140,11 @@ function MainApp() {
         serverStartingRef.current = false;
         window.__voiceboxServerStartedByApp = false;
 
-        // Only fall back to health-check polling when the error indicates the
-        // port is occupied (likely an external server). For real failures
-        // (missing sidecar, signing issues, etc.) surface the error immediately.
-        if (!isPortInUseError(error)) {
-          const msg = error instanceof Error ? error.message : String(error);
-          console.error('Real startup failure — not polling:', msg);
-          setStartupError(msg);
-          return;
-        }
-
-        // Fall back to polling: the server may already be running externally
-        // (e.g. started via python/uvicorn/Docker). Poll the health endpoint
-        // until it responds with a valid Voicebox payload, then transition to
-        // the main UI.
-        console.log('Falling back to health-check polling...');
-        const pollInterval = setInterval(async () => {
-          try {
-            const health = await apiClient.getHealth();
-            if (!isVoiceboxHealthResponse(health)) {
-              console.log('Health response is not from a Voicebox server, keep polling...');
-              return;
-            }
-            console.log('External Voicebox server detected via health check');
-            clearInterval(pollInterval);
-            setServerReady(true);
-          } catch {
-            // Server not ready yet, keep polling
-          }
-        }, 2000);
-
-        // Stop polling after 2 minutes and surface the failure
-        setTimeout(() => {
-          clearInterval(pollInterval);
-          serverStartingRef.current = false;
-          setStartupError(
-            'Could not connect to a Voicebox server within 2 minutes. ' +
-              'Please check that the server is running and try again.',
-          );
-        }, 120_000);
+        // JFW-1 (fail-closed): Ein fremder Prozess wird nicht anhand eines
+        // Health-Payloads wiederverwendet — jeder Startfehler wird direkt
+        // angezeigt, statt einen externen Sidecar zu adoptieren.
+        const msg = error instanceof Error ? error.message : String(error);
+        setStartupError(msg);
       });
 
     // Cleanup: stop server on actual unmount (not StrictMode remount)

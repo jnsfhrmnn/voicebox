@@ -2,6 +2,7 @@ import { Loader2, Pause, Play } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { Button } from '@/components/ui/button';
+import { apiClient } from '@/lib/api/client';
 import { cn } from '@/lib/utils/cn';
 import { debug } from '@/lib/utils/debug';
 
@@ -14,11 +15,12 @@ function formatDuration(ms?: number | null): string {
 }
 
 export function CaptureInlinePlayer({
-  audioUrl,
+  captureId,
   fallbackDurationMs,
   className,
 }: {
-  audioUrl: string;
+  /** JFW-1: Audio wird ueber den Sidecar-Transport geladen (Auth/Generation). */
+  captureId: string;
   fallbackDurationMs?: number | null;
   className?: string;
 }) {
@@ -104,12 +106,22 @@ export function CaptureInlinePlayer({
     } catch (err) {
       debug.error('Failed to reset inline waveform before load', err);
     }
-    ws.load(audioUrl).catch((err) => {
-      debug.error('Inline waveform load failed', err);
-      setError(err instanceof Error ? err.message : String(err));
-      setIsLoading(false);
-    });
-  }, [audioUrl]);
+    let objectUrl: string | null = null;
+    apiClient
+      .getCaptureAudio(captureId)
+      .then(({ blob }) => {
+        objectUrl = URL.createObjectURL(blob);
+        return ws.load(objectUrl);
+      })
+      .catch((err) => {
+        debug.error('Inline waveform load failed', err);
+        setError(err instanceof Error ? err.message : String(err));
+        setIsLoading(false);
+      });
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [captureId]);
 
   const handlePlayPause = () => {
     const ws = wavesurferRef.current;

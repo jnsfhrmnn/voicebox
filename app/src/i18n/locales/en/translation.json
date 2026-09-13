@@ -30,7 +30,7 @@
     "noTranscriptError": "Capture has no transcript yet",
     "captureCardLabel": "Capture · {{when}}",
     "header": {
-      "modelSummary": "Whisper {{stt}} · Qwen3 · {{llm}}"
+      "modelSummary": "Whisper {{stt}}"
     },
     "source": {
       "dictation": "Dictation",
@@ -760,8 +760,13 @@
       }
     },
     "general": {
-      "docs": { "title": "Read the Docs" },
-      "discord": { "title": "Join the Discord", "subtitle": "Get help & share voices" },
+      "docs": {
+        "title": "Read the Docs"
+      },
+      "discord": {
+        "title": "Join the Discord",
+        "subtitle": "Get help & share voices"
+      },
       "serverUrl": {
         "title": "Server URL",
         "description": "The address of your voicebox backend server.",

@@ -30,7 +30,7 @@
     "noTranscriptError": "此擷取尚無轉錄文字",
     "captureCardLabel": "擷取 · {{when}}",
     "header": {
-      "modelSummary": "Whisper {{stt}} · Qwen3 · {{llm}}"
+      "modelSummary": "Whisper {{stt}}"
     },
     "source": {
       "dictation": "口述",
@@ -760,8 +760,13 @@
       }
     },
     "general": {
-      "docs": { "title": "閱讀文件" },
-      "discord": { "title": "加入 Discord", "subtitle": "取得協助與分享聲音" },
+      "docs": {
+        "title": "閱讀文件"
+      },
+      "discord": {
+        "title": "加入 Discord",
+        "subtitle": "取得協助與分享聲音"
+      },
       "serverUrl": {
         "title": "伺服器 URL",
         "description": "Voicebox 後端伺服器的位址。",

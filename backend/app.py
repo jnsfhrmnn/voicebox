@@ -109,16 +109,33 @@ def _install_auth_middleware(application: FastAPI) -> None:
     import os as _os
 
     token = _os.environ.get("JFWHISPER_API_TOKEN", "")
+    # JFW-1: Generation wird pro Start von Tauri erzeugt und nur per Umgebung
+    # uebergeben. Jede authentifizierte Anfrage muss die zugehoerige Generation
+    # mitliefern — so werden spate Antworten eines alten Sidecar-Starts
+    # (neue Generation) abgelehnt, selbst wenn das Token noch gueltig ist.
+    generation = _os.environ.get("JFWHISPER_GENERATION", "")
+
+    # Interne Rust-Pfade: werden nur vom eigenen Tauri-Prozess ueber Loopback
+    # aufgerufen (Shutdown/Watchdog), nie aus einer Webview. Sie bleiben
+    # Token-frei, weil der Rust-Code sie vor dem Ready-Handshake bzw. beim
+    # Prozessende aufruft und keinen Session-Zustand mehr besitzt.
+    internal_paths = ("/health", "/docs", "/openapi.json", "/shutdown", "/watchdog/disable")
 
     @application.middleware("http")
     async def auth_middleware(request, call_next):
-        if token and request.url.path not in ("/health", "/docs", "/openapi.json"):
+        if token and request.url.path not in internal_paths:
             provided = request.headers.get("authorization", "")
             expected = "Bearer " + token
             if not hmac.compare_digest(provided.encode(), expected.encode()):
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse({"detail": "unauthorized"}, status_code=401)
+            # Generation-Pruefung: nur die aktive Generation des laufenden
+            # Sidecar-Starts ist gueltig.
+            if generation and request.headers.get("x-jfwhisper-generation", "") != generation:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse({"detail": "stale generation"}, status_code=409)
         return await call_next(request)
 
 

@@ -9,9 +9,6 @@ interface ServerStore {
   isConnected: boolean;
   setIsConnected: (connected: boolean) => void;
 
-  mode: 'local' | 'remote';
-  setMode: (mode: 'local' | 'remote') => void;
-
   keepServerRunningOnClose: boolean;
   setKeepServerRunningOnClose: (keepRunning: boolean) => void;
 
@@ -75,9 +72,6 @@ export const useServerStore = create<ServerStore>()(
 
       isConnected: false,
       setIsConnected: (connected) => set({ isConnected: connected }),
-
-      mode: 'local',
-      setMode: (mode) => set({ mode }),
 
       keepServerRunningOnClose: false,
       setKeepServerRunningOnClose: (keepRunning) => set({ keepServerRunningOnClose: keepRunning }),

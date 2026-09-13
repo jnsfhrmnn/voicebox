@@ -1,12 +1,7 @@
-import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertCircle, ArrowUpRight, Book, Download, Loader2, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { Trans, useTranslation } from 'react-i18next';
-import * as z from 'zod';
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
-import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/use-toast';
@@ -18,56 +13,13 @@ import { LanguageSelect } from './LanguageSelect';
 import { SettingRow, SettingSection } from './SettingRow';
 import { ThemeSelect } from './ThemeSelect';
 
-function makeConnectionSchema(invalidUrl: string) {
-  return z.object({
-    serverUrl: z.string().url(invalidUrl),
-  });
-}
-
-type ConnectionFormValues = { serverUrl: string };
-
 export function GeneralPage() {
   const { t } = useTranslation();
   const platform = usePlatform();
-  const serverUrl = useServerStore((state) => state.serverUrl);
-  const setServerUrl = useServerStore((state) => state.setServerUrl);
   const keepServerRunningOnClose = useServerStore((state) => state.keepServerRunningOnClose);
   const setKeepServerRunningOnClose = useServerStore((state) => state.setKeepServerRunningOnClose);
-  const mode = useServerStore((state) => state.mode);
-  const setMode = useServerStore((state) => state.setMode);
   const { toast } = useToast();
   const { data: health, isLoading, error: healthError } = useServerHealth();
-
-  const resolver = useMemo(
-    () => zodResolver(makeConnectionSchema(t('settings.general.serverUrl.invalidUrl'))),
-    [t],
-  );
-  const form = useForm<ConnectionFormValues>({
-    resolver,
-    defaultValues: { serverUrl },
-  });
-
-  useEffect(() => {
-    form.reset({ serverUrl });
-  }, [serverUrl, form]);
-
-  // Re-run validation when the locale changes so existing error messages retranslate.
-  useEffect(() => {
-    if (form.formState.errors.serverUrl) {
-      form.trigger('serverUrl');
-    }
-  }, [t, form]);
-
-  const { isDirty } = form.formState;
-
-  function onSubmit(data: ConnectionFormValues) {
-    setServerUrl(data.serverUrl);
-    form.reset(data);
-    toast({
-      title: t('settings.general.serverUrl.updatedTitle'),
-      description: t('settings.general.serverUrl.updatedDescription', { url: data.serverUrl }),
-    });
-  }
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -110,35 +62,16 @@ export function GeneralPage() {
       </div>
 
       <SettingSection>
+        {/* JFW-1: Die Sidecar-Adresse ist kein Einstellwert — Port und Token
+            bleiben im Rust-State, die Webview spricht den Sidecar nur ueber
+            typisierte Tauri-Kommandos an. */}
         <SettingRow
           title={t('settings.general.serverUrl.title')}
           description={t('settings.general.serverUrl.description')}
           action={
             <ConnectionStatus health={health} isLoading={isLoading} healthError={healthError} />
           }
-        >
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="flex gap-2">
-              <FormField
-                control={form.control}
-                name="serverUrl"
-                render={({ field }) => (
-                  <FormItem className="flex-1">
-                    <FormControl>
-                      <Input placeholder="http://127.0.0.1:17493" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {isDirty && (
-                <Button type="submit" size="sm">
-                  {t('common.save')}
-                </Button>
-              )}
-            </form>
-          </Form>
-        </SettingRow>
+        />
 
         <SettingRow
           title={t('settings.general.keepServerRunning.title')}
@@ -171,28 +104,6 @@ export function GeneralPage() {
           }
         />
 
-        {platform.metadata.isTauri && (
-          <SettingRow
-            title={t('settings.general.networkAccess.title')}
-            description={t('settings.general.networkAccess.description')}
-            htmlFor="allowNetworkAccess"
-            action={
-              <Toggle
-                id="allowNetworkAccess"
-                checked={mode === 'remote'}
-                onCheckedChange={(checked: boolean) => {
-                  setMode(checked ? 'remote' : 'local');
-                  toast({
-                    title: t('settings.general.networkAccess.updatedTitle'),
-                    description: checked
-                      ? t('settings.general.networkAccess.enabled')
-                      : t('settings.general.networkAccess.disabled'),
-                  });
-                }}
-              />
-            }
-          />
-        )}
 
         <SettingRow
           title={t('settings.language.label')}
@@ -206,8 +117,6 @@ export function GeneralPage() {
           action={<ThemeSelect />}
         />
       </SettingSection>
-
-      <ApiReferenceCard serverUrl={serverUrl} />
 
       {platform.metadata.isTauri && <UpdatesSection />}
     </div>
@@ -373,57 +282,5 @@ function UpdatesSection() {
         </>
       )}
     </SettingSection>
-  );
-}
-
-function ApiReferenceCard({ serverUrl }: { serverUrl: string }) {
-  const { t } = useTranslation();
-  const endpoints = [
-    { method: 'POST', path: '/generate', label: t('settings.general.api.endpoints.generate') },
-    { method: 'GET', path: '/health', label: t('settings.general.api.endpoints.health') },
-    { method: 'GET', path: '/profiles', label: t('settings.general.api.endpoints.profiles') },
-    { method: 'GET', path: '/history', label: t('settings.general.api.endpoints.history') },
-  ];
-
-  return (
-    <div className="rounded-lg border border-border/60 p-4 space-y-3">
-      <div>
-        <h3 className="text-sm font-medium">{t('settings.general.api.title')}</h3>
-        <p className="text-sm text-muted-foreground">
-          <Trans
-            i18nKey="settings.general.api.description"
-            values={{ url: serverUrl }}
-            components={{
-              code: <code className="text-xs bg-muted px-1 py-0.5 rounded font-mono" />,
-            }}
-          />
-        </p>
-      </div>
-      <div className="space-y-1">
-        {endpoints.map((ep) => (
-          <div key={ep.path} className="flex items-center gap-2.5 py-1">
-            <span
-              className={`text-[10px] font-mono font-semibold w-9 text-center rounded px-1 py-px ${
-                ep.method === 'POST' ? 'bg-accent/10 text-accent' : 'bg-muted text-muted-foreground'
-              }`}
-            >
-              {ep.method}
-            </span>
-            <code className="text-xs font-mono text-muted-foreground">{ep.path}</code>
-            <span className="text-xs text-muted-foreground/50 ml-auto">{ep.label}</span>
-          </div>
-        ))}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        <a
-          href={`${serverUrl}/docs`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-accent hover:underline"
-        >
-          {t('settings.general.api.viewReference')}
-        </a>
-      </p>
-    </div>
   );
 }

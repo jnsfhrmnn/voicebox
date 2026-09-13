@@ -1,6 +1,5 @@
 import { TitleBarDragRegion } from '@/components/TitleBarDragRegion';
 import { AudioKeepAlive } from '@/components/AudioPlayer/AudioKeepAlive';
-import { AudioPlayer } from '@/components/AudioPlayer/AudioPlayer';
 import { TOP_SAFE_AREA_PADDING } from '@/lib/constants/ui';
 import { cn } from '@/lib/utils/cn';
 
@@ -16,7 +15,6 @@ export function AppFrame({ children }: AppFrameProps) {
       <TitleBarDragRegion />
       <AudioKeepAlive />
       {children}
-      <AudioPlayer />
     </div>
   );
 }
