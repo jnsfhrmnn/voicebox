@@ -29,6 +29,9 @@ def load_profile() -> dict:
     return {
         "active": set(tables["active"]),
         "forbidden": set(tables["forbidden"]),
+        # Infrastruktur der Schema-Linie (Alembic + Manifest-Meta): erlaubt,
+        # aber kein Produkt-Datensatz.
+        "infrastructure": set(tables.get("infrastructure", [])),
     }
 
 
@@ -46,6 +49,7 @@ def table_names(db_path: Path) -> set[str]:
 def check(db_path: Path) -> int:
     prof = load_profile()
     active, forbidden = prof["active"], prof["forbidden"]
+    infrastructure = prof.get("infrastructure", set())
 
     if not db_path.exists():
         print(f"[schema-gate] FEHLER: DB nicht vorhanden: {db_path}")
@@ -54,7 +58,7 @@ def check(db_path: Path) -> int:
     found = table_names(db_path)
     missing_active = sorted(active - found)
     present_forbidden = sorted(forbidden & found)
-    unknown = sorted(found - active - forbidden)
+    unknown = sorted(found - active - forbidden - infrastructure)
 
     problems: list[str] = []
     if missing_active:
@@ -72,7 +76,8 @@ def check(db_path: Path) -> int:
 
     print(
         f"[schema-gate] OK: {db_path} — exakt die erlaubten Tabellen "
-        f"{sorted(active)}; keine verbotene Struktur."
+        f"{sorted(active)} (+ Infrastruktur {sorted(infrastructure) if infrastructure else '—'}); "
+        f"keine verbotene Struktur."
     )
     return 0
 

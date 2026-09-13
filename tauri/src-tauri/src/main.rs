@@ -175,6 +175,30 @@ struct ServerState {
     pub(crate) sidecar_port: Mutex<Option<u16>>,
 }
 
+/// JFW-1: Pfad der gebündelten CPU-Sidecar-Binary.
+///
+/// Produktionslayout (tauri build): die Sidecar liegt neben dem App-Exe
+/// (externalBin aus tauri.conf.json). Dev-Fallback: das binaries/-Verzeichnis
+/// des src-tauri-Projekts (dort liegen die Platzhalter von setup-dev-sidecar.js).
+fn resolve_sidecar_path() -> std::path::PathBuf {
+    let exe_name = if cfg!(windows) {
+        "voicebox-server-x86_64-pc-windows-msvc.exe"
+    } else {
+        "voicebox-server-x86_64-unknown-linux-gnu"
+    };
+    // 1) Neben dem App-Exe (Produktion).
+    if let Ok(exe_dir) = std::env::current_exe() {
+        if let Some(parent) = exe_dir.parent() {
+            let candidate = parent.join(exe_name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    // 2) Dev-Layout: tauri/src-tauri/binaries/ (relativ zum CWD des App-Prozesses).
+    std::path::PathBuf::from("tauri/src-tauri/binaries").join(exe_name)
+}
+
 #[command]
 async fn start_server(
     app: tauri::AppHandle,
@@ -383,6 +407,41 @@ async fn start_server(
         .to_str()
         .ok_or_else(|| "Invalid data dir path".to_string())?
         .to_string();
+
+    // JFW-1 DB-Migrations-Kontrakt: Tauri orchestriert die Migration VOR dem
+    // Backendstart über den gebündelten CPU-Early-Entrypoint des Sidecars.
+    // Fail-closed: jeder Exit ≠ 0 (unbekannter Head, Abbruch, Kontraktverletzung)
+    // stoppt den Start — weder CPU noch CUDA starten auf dieser DB. Die DB
+    // bleibt unverändert; das Backup liegt in <data_dir>/backups/.
+    // Dev-Modus: die Sidecar-Binary ist ein Platzhalter (setup-dev-sidecar.js),
+    // daher läuft die Migration dort über init_db() im Python-Server selbst.
+    #[cfg(not(debug_assertions))]
+    {
+        let db_path = data_dir.join("voicebox.db");
+        let migrate_cmd = if cuda_binary.is_some() {
+            // CUDA-Binary: dieselbe Schema-Linie, onedir-Layout (cwd = Verzeichnis).
+            std::process::Command::new(cuda_binary.as_ref().unwrap())
+                .current_dir(cuda_binary.as_ref().unwrap().parent().unwrap())
+        } else {
+            let sidecar_exe = resolve_sidecar_path();
+            std::process::Command::new(&sidecar_exe)
+        };
+        let output = migrate_cmd
+            .arg("--migrate")
+            .arg(&db_path)
+            .output()
+            .map_err(|e| format!("Schema-Migration konnte nicht gestartet werden: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "DB-Schema-Migration fehlgeschlagen (Exit {}): {}. Start abgelehnt — \
+                 die DB bleibt unverändert, Backup liegt in backups/.",
+                output.status.code().unwrap_or(-1),
+                stderr.trim()
+            ));
+        }
+    }
+
     // JFW-1: dynamischer Loopback-Port. "0" laesst das OS einen ephemeren Port
     // waehlen; der Sidecar meldet den echten Wert im Ready-Handshake zurueck.
     let port_str = "0".to_string();

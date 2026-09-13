@@ -1,7 +1,28 @@
 [project]
-name = "voicebox-backend"
-version = "0.2.3"
-requires-python = ">=3.12"
+name = "jfw-whisper-backend"
+version = "0.5.0"
+description = "JFW-Whisper Sidecar — Transkription-only Backend (Voicebox-Fork, JFW-1)"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    # Web / API
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "requests>=2.32",
+    # DB + Schema-Linie (Alembic)
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.13",
+    # Audio / STT-Kern
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "librosa>=0.10",
+    "torch>=2.4; platform_system != 'Darwin'",
+    "faster-whisper>=1.0",
+    # Betrieb
+    "psutil>=5.9",
+    "pydantic>=2.7",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff – linter + formatter

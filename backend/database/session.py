@@ -5,8 +5,11 @@ import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from pathlib import Path
+
 from .. import config
-from .models import Base
+from ..schema import run_schema_upgrade
+from .models import Base  # noqa: F401 -- Re-Export (ORM-Metadaten)
 from .migrations import run_migrations
 
 logger = logging.getLogger(__name__)
@@ -18,12 +21,13 @@ _db_path = None
 
 
 def init_db() -> None:
-    """Initialize the database engine, run migrations, and create tables.
+    """Bringt die DB auf ``alembic upgrade head`` und setzt das Engine-Setup.
 
-    JFW-1: Es werden nur die Tabellen des Transkriptionsprofils angelegt
-    (``captures``, ``capture_settings``). Das Seeding von TTS-/LLM-Daten
-    (Audio-Kanäle, Effekt-Presets, Generation-Versionen) ist entfernt --
-    es gab dazu im aktiven Profil weder Routen noch Tabellen.
+    JFW-1: Die kanonische Schema-Linie sind die Alembic-Revisionen in
+    ``backend/alembic/versions`` (nur ``captures`` + ``capture_settings``).
+    Vor dem Upgrade werden Legacy-TTS-/LLM-Tabellen gedroppt und die
+    idempotenten Column-Migrationen laufen, damit jede vorhandene Voicebox-DB
+    auf das Kontrakt konvergiert. Das Seeding von TTS-/LLM-Daten ist entfernt.
     """
     global engine, SessionLocal, _db_path
 
@@ -37,8 +41,11 @@ def init_db() -> None:
 
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+    # 1) Safety Net: Legacy-TTS-/LLM-Tabellen drop + idempotente Column-Migrationen.
     run_migrations(engine)
-    Base.metadata.create_all(bind=engine)
+
+    # 2) Kanonische Schema-Linie: alembic upgrade head (nur captures + capture_settings).
+    run_schema_upgrade(_db_path, engine)
 
 
 def get_db():

@@ -93,6 +93,12 @@ def build_server(cuda=False):
             "backend.config",
             "--hidden-import",
             "backend.database",
+            # JFW-1 DB-Schema-Linie (CPU-Early-Entrypoint): Alembic + die
+            # Revisionen werden als Datei geladen, daher zusätzlich als Daten.
+            "--hidden-import",
+            "backend.schema",
+            "--collect-all",
+            "alembic",
             "--hidden-import",
             "backend.models",
             "--hidden-import",
@@ -232,6 +238,19 @@ def build_server(cuda=False):
 
     dist_dir = str(backend_dir / "dist")
     build_dir = str(backend_dir / "build")
+
+    # JFW-1 DB-Schema-Linie: alembic.ini + versions/ werden zur Laufzeit aus
+    # der Datei geladen (ScriptDirectory) und müssen daher als Daten gebundlet
+    # werden. Pfade sind relativ zu backend_dir, weil os.chdir(backend_dir)
+    # vor dem PyInstaller-Aufruf läuft — absolut würde in die .spec gebacken.
+    args.extend(
+        [
+            "--add-data",
+            f"{backend_dir / 'alembic.ini'}{os.pathsep}alembic.ini",
+            "--add-data",
+            f"{backend_dir / 'alembic' / 'versions'}{os.pathsep}alembic/versions",
+        ]
+    )
 
     args.extend(
         [

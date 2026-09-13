@@ -47,6 +47,37 @@ if "--version" in sys.argv:
     print(f"voicebox-server {__version__}")
     sys.exit(0)
 
+# JFW-1 DB-Migrations-Kontrakt (CPU-Early-Entrypoint): Tauri orchestriert die
+# Migration VOR dem Backendstart über diesen Pfad. Er liegt bewusst VOR den
+# Torch/Transformers-Imports — das Schema-Upgrade braucht nur Alembic +
+# SQLAlchemy und muss auch ohne ML-Stack lauffähig sein (Build-/CI-Schritt).
+# Fail-closed: Exit 3 = Start abgelehnt (unbekannter Head, Abbruch,
+# Kontraktverletzung) — die DB bleibt unverändert, Backup liegt in
+# <data_dir>/backups/. Wiederholter Start auf demselben Head ist No-Op.
+if "--migrate" in sys.argv or "--schema-info" in sys.argv:
+    import argparse as _ap
+
+    _p = _ap.ArgumentParser(add_help=False)
+    _p.add_argument("--migrate", type=str, default=None)
+    _p.add_argument("--schema-info", dest="schema_info", type=str, default=None)
+    _early_args, _ = _p.parse_known_args()
+
+    from backend.schema import MigrationError, run_schema_upgrade, schema_info  # noqa: E402
+
+    if _early_args.migrate is not None:
+        try:
+            run_schema_upgrade(_early_args.migrate)
+        except MigrationError as exc:
+            print(f"SCHEMA-FAIL-CLOSED: {exc}", file=sys.stderr)
+            sys.exit(3)
+        sys.exit(0)
+
+    if _early_args.schema_info is not None:
+        import json as _json_early
+
+        print(_json_early.dumps(schema_info(_early_args.schema_info), indent=2))
+        sys.exit(0)
+
 import logging
 
 # Set up logging FIRST, before any imports that might fail

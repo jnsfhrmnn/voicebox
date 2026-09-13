@@ -107,6 +107,10 @@
       "profile_channel_mappings",
       "generation_settings",
       "mcp_client_bindings"
+    ],
+    "infrastructure": [
+      "alembic_version",
+      "schema_meta"
     ]
   }
 }
