@@ -52,7 +52,7 @@ from .services import transcribe
 from .database import get_db
 from .utils.platform_detect import get_backend_type
 from .utils.progress import get_progress_manager
-from .services.task_queue import create_background_task, init_queue
+from .services.task_queue import create_background_task
 from .routes import register_routers
 
 
@@ -256,36 +256,6 @@ async def _run_startup(application: FastAPI) -> None:
 
     logger.info("Database: %s", _db_path)
     logger.info("Data directory: %s", config.get_data_dir())
-
-    init_queue()
-
-    # Mark stale "generating" records as failed -- leftovers from a killed process
-    from sqlalchemy import text as sa_text
-
-    db = next(get_db())
-    try:
-        result = db.execute(
-            sa_text(
-                "UPDATE generations SET status = 'failed', "
-                "error = 'Server was shut down during generation' "
-                "WHERE status IN ('generating', 'loading_model')"
-            )
-        )
-        if result.rowcount > 0:
-            logger.info("Marked %d stale generation(s) as failed", result.rowcount)
-
-        from .database import VoiceProfile as DBVoiceProfile, Generation as DBGeneration
-
-        profile_count = db.query(DBVoiceProfile).count()
-        generation_count = db.query(DBGeneration).count()
-        logger.info("Profiles: %d, Generations: %d", profile_count, generation_count)
-
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.warning("Could not clean up stale generations: %s", e)
-    finally:
-        db.close()
 
     backend_type = get_backend_type()
     logger.info("Backend: %s", backend_type.upper())

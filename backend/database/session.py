@@ -1,23 +1,13 @@
 """Engine creation, initialization, and session management."""
 
 import logging
-import uuid
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from .. import config
-from .models import (
-    Base,
-    AudioChannel,
-    EffectPreset,
-    Generation,
-    GenerationVersion,
-    ProfileChannelMapping,
-    VoiceProfile,
-)
+from .models import Base
 from .migrations import run_migrations
-from .seed import backfill_generation_versions, seed_builtin_presets
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +18,13 @@ _db_path = None
 
 
 def init_db() -> None:
-    """Initialize the database engine, run migrations, create tables, and seed data."""
+    """Initialize the database engine, run migrations, and create tables.
+
+    JFW-1: Es werden nur die Tabellen des Transkriptionsprofils angelegt
+    (``captures``, ``capture_settings``). Das Seeding von TTS-/LLM-Daten
+    (Audio-Kanäle, Effekt-Presets, Generation-Versionen) ist entfernt --
+    es gab dazu im aktiven Profil weder Routen noch Tabellen.
+    """
     global engine, SessionLocal, _db_path
 
     _db_path = config.get_db_path()
@@ -43,30 +39,6 @@ def init_db() -> None:
 
     run_migrations(engine)
     Base.metadata.create_all(bind=engine)
-
-    # Create default audio channel if it doesn't exist
-    db = SessionLocal()
-    try:
-        default_channel = db.query(AudioChannel).filter(AudioChannel.is_default == True).first()
-        if not default_channel:
-            default_channel = AudioChannel(
-                id=str(uuid.uuid4()),
-                name="Default",
-                is_default=True,
-            )
-            db.add(default_channel)
-
-            for profile in db.query(VoiceProfile).all():
-                db.add(ProfileChannelMapping(
-                    profile_id=profile.id,
-                    channel_id=default_channel.id,
-                ))
-            db.commit()
-    finally:
-        db.close()
-
-    backfill_generation_versions(SessionLocal, Generation, GenerationVersion)
-    seed_builtin_presets(SessionLocal, EffectPreset)
 
 
 def get_db():

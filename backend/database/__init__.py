@@ -1,48 +1,18 @@
-"""Database package — ORM models, session management, and migrations.
+"""Database package -- ORM models, session management, and migrations.
 
-Re-exports all public symbols so that ``from .database import get_db``
-and ``from .database import Generation as DBGeneration`` continue to work
-without changing any importers.
+JFW-1 (Transkriptions-Produktprofil): Re-Export der Live-Symbole. Die
+TTS-/LLM-Modelle sind aus dem Laufzeitvertrag entfernt; das Schema-Kontrakt
+erlaubt exakt die Tabellen ``captures`` und ``capture_settings``.
 """
 
-from .models import (
-    Base,
-    AudioChannel,
-    Capture,
-    CaptureSettings,
-    ChannelDeviceMapping,
-    EffectPreset,
-    Generation,
-    GenerationSettings,
-    GenerationVersion,
-    MCPClientBinding,
-    ProfileChannelMapping,
-    ProfileSample,
-    Project,
-    Story,
-    StoryItem,
-    VoiceProfile,
-)
+from .models import Base, Capture, CaptureSettings
 from .session import engine, SessionLocal, _db_path, init_db, get_db
 
 __all__ = [
     # Models
     "Base",
-    "AudioChannel",
     "Capture",
     "CaptureSettings",
-    "ChannelDeviceMapping",
-    "EffectPreset",
-    "Generation",
-    "GenerationSettings",
-    "GenerationVersion",
-    "MCPClientBinding",
-    "ProfileChannelMapping",
-    "ProfileSample",
-    "Project",
-    "Story",
-    "StoryItem",
-    "VoiceProfile",
     # Session
     "engine",
     "SessionLocal",
