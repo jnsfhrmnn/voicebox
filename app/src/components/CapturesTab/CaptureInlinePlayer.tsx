@@ -58,7 +58,11 @@ export function CaptureInlinePlayer({
       interact: true,
       dragToSeek: { debounceTime: 0 },
       mediaControls: false,
-      backend: 'WebAudio',
+      // JFW-1: MediaElement statt WebAudio — der WebAudio-Player ruft intern
+      // fetch() auf (src-Setter), und die App-CSP (default-src 'self', kein
+      // connect-src) blockiert das für blob:-URLs. MediaElement spielt über
+      // ein natives <audio>-Element mit Object-URL ab: kein fetch, CSP-sicher.
+      backend: 'MediaElement',
     });
 
     ws.on('ready', () => {
@@ -106,21 +110,18 @@ export function CaptureInlinePlayer({
     } catch (err) {
       debug.error('Failed to reset inline waveform before load', err);
     }
-    let objectUrl: string | null = null;
+    // JFW-1: loadBlob statt load(url) — WaveSurfer v7 ruft bei load(url) intern
+    // fetch(url) auf, und die App-CSP (default-src 'self', kein connect-src)
+    // blockiert fetch() für blob:-URLs. loadBlob() decodiert den Blob direkt
+    // über decodeAudioData ohne Netzwerkzugriff und ist damit CSP-sicher.
     apiClient
       .getCaptureAudio(captureId)
-      .then(({ blob }) => {
-        objectUrl = URL.createObjectURL(blob);
-        return ws.load(objectUrl);
-      })
+      .then(({ blob }) => ws.loadBlob(blob))
       .catch((err) => {
         debug.error('Inline waveform load failed', err);
         setError(err instanceof Error ? err.message : String(err));
         setIsLoading(false);
       });
-    return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
   }, [captureId]);
 
   const handlePlayPause = () => {

@@ -114,43 +114,63 @@ class PyTorchSTTBackend:
         def _transcribe_sync():
             """Run synchronous transcription in thread pool."""
             # Load audio
-            audio, _sr = load_audio(audio_path, sample_rate=16000)
+            audio, sr = load_audio(audio_path, sample_rate=16000)
+
+            # Whisper verarbeitet exakt 30-s-Fenster (3000 Feature-Frame).
+            # Laengere Aufnahmen wurden bisher still auf das erste Fenster
+            # trunciert — der Rest ging verloren. Deshalb: in 30-s-Chunks
+            # transkribieren und die Teilergebnisse verketten. Kurze Audios
+            # (<= 30 s) laufen unveraendert als Einzel-Chunk durch.
+            chunk_samples = 30 * sr
+            if len(audio) <= chunk_samples:
+                chunks = [audio]
+            else:
+                chunks = [
+                    audio[i : i + chunk_samples]
+                    for i in range(0, len(audio), chunk_samples)
+                ]
+                logger.info(
+                    "Transkribiere %d Chunk(e) a 30s (%.1fs Audio)",
+                    len(chunks),
+                    len(audio) / sr,
+                )
 
             # Inference runs with the process's default HF_HUB_OFFLINE
             # state — forcing offline here (issue #462) broke online users
             # whose `get_decoder_prompt_ids` / tokenizer calls issue
             # legitimate metadata lookups.
-            # Process audio
-            inputs = self.processor(
-                audio,
-                sampling_rate=16000,
-                return_tensors="pt",
-            )
-            inputs = inputs.to(self.device)
-
-            # Generate transcription
-            # If language is provided, force it; otherwise let Whisper auto-detect
-            generate_kwargs = {}
-            if language:
-                forced_decoder_ids = self.processor.get_decoder_prompt_ids(
-                    language=language,
-                    task="transcribe",
+            parts = []
+            for chunk in chunks:
+                inputs = self.processor(
+                    chunk,
+                    sampling_rate=sr,
+                    return_tensors="pt",
                 )
-                generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
+                inputs = inputs.to(self.device)
 
-            with torch.no_grad():
-                predicted_ids = self.model.generate(
-                    inputs["input_features"],
-                    **generate_kwargs,
-                )
+                # If language is provided, force it; otherwise auto-detect.
+                generate_kwargs = {}
+                if language:
+                    forced_decoder_ids = self.processor.get_decoder_prompt_ids(
+                        language=language,
+                        task="transcribe",
+                    )
+                    generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
 
-            # Decode
-            transcription = self.processor.batch_decode(
-                predicted_ids,
-                skip_special_tokens=True,
-            )[0]
+                with torch.no_grad():
+                    predicted_ids = self.model.generate(
+                        inputs["input_features"],
+                        **generate_kwargs,
+                    )
 
-            return transcription.strip()
+                text = self.processor.batch_decode(
+                    predicted_ids,
+                    skip_special_tokens=True,
+                )[0].strip()
+                if text:
+                    parts.append(text)
+
+            return " ".join(parts).strip()
 
         # Run blocking transcription in thread pool
         return await asyncio.to_thread(_transcribe_sync)
