@@ -35,6 +35,27 @@ def _get_or_create_capture_row(db: Session) -> DBCaptureSettings:
     return row
 
 
+def get_capture_settings(db: Session) -> DBCaptureSettings:
+    """Return the capture settings row, creating it with defaults if missing."""
+    return _get_or_create_capture_row(db)
+
+
+def _apply_patch(row: Any, patch: dict[str, Any]) -> None:
+    """Apply a partial update to a settings row.
+
+    Values explicitly set to ``None`` are honored only for columns where the
+    schema allows it; a ``None`` for a non-nullable field is dropped rather
+    than crashing the request. Unknown keys (e.g. removed LLM/Refine fields)
+    are ignored so older clients stay compatible.
+    """
+    columns = type(row).__table__.columns
+    for key, value in patch.items():
+        col = columns.get(key)
+        if col is None:
+            continue
+        if value is None and not col.nullable:
+            continue
+        setattr(row, key, value)
 
 
 def update_capture_settings(db: Session, patch: dict[str, Any]) -> DBCaptureSettings:

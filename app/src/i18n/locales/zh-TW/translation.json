@@ -12,12 +12,7 @@
     "unknownError": "未知錯誤"
   },
   "nav": {
-    "generate": "生成",
-    "stories": "故事",
     "captures": "擷取",
-    "voices": "聲音",
-    "effects": "效果",
-    "audio": "音訊",
     "models": "模型",
     "settings": "設定",
     "updateBadge": "更新"
@@ -38,9 +33,7 @@
       "file": "檔案"
     },
     "transcript": {
-      "refined": "精修",
       "raw": "原始",
-      "refinedHint": "由 Qwen3 · {{model}} 精修",
       "rawHint": "由 Whisper {{model}} 轉錄"
     },
     "actions": {
@@ -50,8 +43,6 @@
       "dictate": "口述",
       "stop": "停止",
       "copy": "複製",
-      "refine": "精修",
-      "reRefine": "重新精修",
       "export": "匯出",
       "exportDropdownLabel": "匯出格式",
       "exportAudio": "音訊 (WAV)",
@@ -950,38 +941,6 @@
         "archive": {
           "title": "封存音訊",
           "description": "在每筆轉錄文字旁保留原始錄音。"
-        }
-      },
-      "refinement": {
-        "title": "精修",
-        "description": "可選擇在轉錄文字上執行本地 LLM,以清除贅詞、補上標點與修正自我更正。",
-        "auto": {
-          "title": "自動精修轉錄文字",
-          "description": "每次擷取後執行。您仍可在「擷取」分頁中切換原始與精修版本。"
-        },
-        "model": {
-          "title": "精修模型",
-          "description": "較大的模型較慢,但對於細微的自我更正與專業詞彙處理得更好。",
-          "size06": "Qwen3 · 0.6B · 400 MB · {{tail}}",
-          "size17": "Qwen3 · 1.7B · 1.1 GB · {{tail}}",
-          "size40": "Qwen3 · 4B · 2.5 GB · {{tail}}",
-          "tail": {
-            "veryFast": "非常快",
-            "fast": "快速",
-            "fullQuality": "完整品質"
-          }
-        },
-        "smartCleanup": {
-          "title": "智慧清理",
-          "description": "移除贅詞(嗯、呃、那個之類),還原標點符號,修正大小寫,且不重新改寫。"
-        },
-        "selfCorrection": {
-          "title": "移除自我更正",
-          "description": "當您說到一半改變想法時(「其實不對……」、「等等,我是想說……」),刪掉收回的部分,只保留最終意圖。"
-        },
-        "preserveTechnical": {
-          "title": "保留技術術語",
-          "description": "完整保留所說的程式碼識別字、指令名稱與縮寫。當您要對程式碼提示進行口述時請開啟。"
         }
       },
       "playback": {

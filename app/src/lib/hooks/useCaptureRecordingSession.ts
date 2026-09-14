@@ -54,11 +54,11 @@ export interface UseCaptureRecordingSessionOptions {
    */
   onCaptureCreated?: (capture: CaptureResponse) => void;
   /**
-   * Fired with the final delivered text — refined if ``auto_refine`` was on
-   * for this capture, raw transcript otherwise. Used by the floating
+   * Fired with the final delivered text — the raw STT transcript (JFW-1:
+   * kein Refinement, das Transkript ist Endzustand). Used by the floating
    * dictate window to hand the text off to the Rust auto-paste pipeline.
    *
-   * ``allowAutoPaste`` snapshots the setting at chord-start so a refine that
+   * ``allowAutoPaste`` snapshots the setting at chord-start so a paste that
    * lands after the user flips the toggle still uses the value the capture
    * was created under.
    */

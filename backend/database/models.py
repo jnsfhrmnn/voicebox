@@ -33,13 +33,7 @@ class CaptureSettings(Base):
     id = Column(Integer, primary_key=True, default=1)
     stt_model = Column(String, nullable=False, default="turbo")
     language = Column(String, nullable=False, default="auto")
-    auto_refine = Column(Boolean, nullable=False, default=True)
-    llm_model = Column(String, nullable=False, default="0.6B")
-    smart_cleanup = Column(Boolean, nullable=False, default=True)
-    self_correction = Column(Boolean, nullable=False, default=True)
-    preserve_technical = Column(Boolean, nullable=False, default=True)
     allow_auto_paste = Column(Boolean, nullable=False, default=True)
-    default_playback_voice_id = Column(String, nullable=True)
     # Default OFF -- opting in is what triggers the macOS Input Monitoring TCC
     # prompt. We deliberately don't spawn the global keyboard tap until the
     # user flips this on so a fresh-install user doesn't see a scary
@@ -60,9 +54,9 @@ class CaptureSettings(Base):
 class Capture(Base):
     """A single voice input capture (dictation, recording, or uploaded file).
 
-    Stores the original audio alongside the raw transcript. Refinement flags
-    are serialized as JSON so we can reproduce the prompt that generated a
-    refined text, if one was produced.
+    Stores the original audio alongside the raw transcript. JFW-1: das
+    Transkript ist Endzustand — Refinement-/LLM-Spalten sind aus dem
+    Schema-Kontrakt entfernt (Spec: LLM-/TTS-Felder sind kein Zielpfad).
     """
 
     __tablename__ = "captures"
@@ -73,8 +67,5 @@ class Capture(Base):
     language = Column(String, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     transcript_raw = Column(Text, nullable=False, default="")
-    transcript_refined = Column(Text, nullable=True)
     stt_model = Column(String, nullable=True)
-    llm_model = Column(String, nullable=True)
-    refinement_flags = Column(Text, nullable=True)  # JSON blob
     created_at = Column(DateTime, default=datetime.utcnow)

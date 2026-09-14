@@ -182,14 +182,6 @@ class TranscriptionResponse(BaseModel):
     duration: float
 
 
-class RefinementFlagsModel(BaseModel):
-    """Boolean toggles that drive the refinement prompt builder."""
-
-    smart_cleanup: bool = True
-    self_correction: bool = True
-    preserve_technical: bool = True
-
-
 class CaptureResponse(BaseModel):
     """Response model for a capture."""
 
@@ -199,10 +191,7 @@ class CaptureResponse(BaseModel):
     language: Optional[str] = None
     duration_ms: Optional[int] = None
     transcript_raw: str
-    transcript_refined: Optional[str] = None
     stt_model: Optional[str] = None
-    llm_model: Optional[str] = None
-    refinement_flags: Optional[RefinementFlagsModel] = None
     created_at: datetime
 
     class Config:
@@ -220,22 +209,14 @@ class CaptureCreateResponse(CaptureResponse):
     """
     Response model for ``POST /captures``.
 
-    Adds ``auto_refine`` and ``allow_auto_paste`` — the server-side settings
-    captured at the moment the capture was created. The client reads these to
-    decide whether to chain a refinement request and whether to fire the
-    synthetic-paste pipeline, so it doesn't need a synced local copy of the
-    capture_settings table across sibling Tauri webviews.
+    Adds ``allow_auto_paste`` — the server-side setting captured at the moment
+    the capture was created, so the client can decide whether to fire the
+    synthetic-paste pipeline without a synced local copy of the
+    capture_settings table across sibling Tauri webviews. JFW-1: kein
+    Refinement — das Transkript ist Endzustand (Spec).
     """
 
-    auto_refine: bool
     allow_auto_paste: bool
-
-
-class CaptureRefineRequest(BaseModel):
-    """Request to refine a capture's transcript via the LLM."""
-
-    flags: Optional[RefinementFlagsModel] = None
-    model_size: Optional[str] = Field(default=None, pattern="^(0\\.6B|1\\.7B|4B)$")
 
 
 class CaptureRetranscribeRequest(BaseModel):
@@ -246,17 +227,11 @@ class CaptureRetranscribeRequest(BaseModel):
 
 
 class CaptureSettingsResponse(BaseModel):
-    """Server-persisted defaults for the capture / refine flow."""
+    """Server-persisted defaults for the capture flow."""
 
     stt_model: str = Field(default="turbo", pattern="^(base|small|medium|large|turbo)$")
     language: str = Field(default="auto")
-    auto_refine: bool = True
-    llm_model: str = Field(default="0.6B", pattern="^(0\\.6B|1\\.7B|4B)$")
-    smart_cleanup: bool = True
-    self_correction: bool = True
-    preserve_technical: bool = True
     allow_auto_paste: bool = True
-    default_playback_voice_id: Optional[str] = None
     hotkey_enabled: bool = False
     chord_push_to_talk_keys: List[str] = Field(
         default_factory=default_push_to_talk_chord
@@ -274,13 +249,7 @@ class CaptureSettingsUpdate(BaseModel):
 
     stt_model: Optional[str] = Field(default=None, pattern="^(base|small|medium|large|turbo)$")
     language: Optional[str] = None
-    auto_refine: Optional[bool] = None
-    llm_model: Optional[str] = Field(default=None, pattern="^(0\\.6B|1\\.7B|4B)$")
-    smart_cleanup: Optional[bool] = None
-    self_correction: Optional[bool] = None
-    preserve_technical: Optional[bool] = None
     allow_auto_paste: Optional[bool] = None
-    default_playback_voice_id: Optional[str] = None
     hotkey_enabled: Optional[bool] = None
     chord_push_to_talk_keys: Optional[List[str]] = Field(default=None, min_length=1, max_length=6)
     chord_toggle_to_talk_keys: Optional[List[str]] = Field(default=None, min_length=1, max_length=6)
@@ -428,10 +397,6 @@ class CaptureReadinessResponse(BaseModel):
     """
 
     stt: ModelReadiness
-    # JFW-1 (jf-whisper-Profil): kein lokales Textmodell — das LLM-Gate ist aus
-    # der Readiness entfernt. Das Feld bleibt optional, damit alte Clients nicht
-    # brechen; neue Clients ignorieren es.
-    llm: Optional[ModelReadiness] = None
 
 
 class HealthResponse(BaseModel):

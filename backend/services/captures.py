@@ -1,14 +1,13 @@
 """
-Captures service — persists raw audio alongside its STT transcript and,
-optionally, an LLM-refined version.
+Captures service — persists raw audio alongside its STT transcript.
 
 A capture is a single voice input event (dictation, long-form recording, or
 uploaded file). Storage mirrors the generations flow: audio lives under
-``data/captures/<id>.wav`` and rows live in the ``captures`` table.
+``data/captures/<id>.wav`` and rows live in the ``captures`` table. JFW-1:
+das Transkript ist Endzustand — es gibt kein Refinement (Spec).
 """
 
 import contextlib
-import json
 import logging
 import uuid
 from pathlib import Path
@@ -19,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .. import config
 from ..database import Capture as DBCapture
-from ..models import CaptureResponse, RefinementFlagsModel
+from ..models import CaptureResponse
 from ..utils.audio import load_audio
 from .transcribe import get_whisper_model
 
@@ -34,13 +33,6 @@ WHISPER_NATIVE_FORMATS = (".wav", ".mp3", ".flac", ".ogg")
 
 
 def _to_response(row: DBCapture) -> CaptureResponse:
-    flags_model: Optional[RefinementFlagsModel] = None
-    if row.refinement_flags:
-        try:
-            flags_model = RefinementFlagsModel(**json.loads(row.refinement_flags))
-        except (ValueError, TypeError):
-            flags_model = None
-
     return CaptureResponse(
         id=row.id,
         audio_path=row.audio_path,
@@ -48,10 +40,7 @@ def _to_response(row: DBCapture) -> CaptureResponse:
         language=row.language,
         duration_ms=row.duration_ms,
         transcript_raw=row.transcript_raw or "",
-        transcript_refined=row.transcript_refined,
         stt_model=row.stt_model,
-        llm_model=row.llm_model,
-        refinement_flags=flags_model,
         created_at=row.created_at,
     )
 
@@ -202,10 +191,6 @@ async def retranscribe_capture(
     row.stt_model = resolved_stt
     if language:
         row.language = language
-    # Refined text is stale after a fresh STT pass — force a re-refine.
-    row.transcript_refined = None
-    row.llm_model = None
-    row.refinement_flags = None
     db.commit()
     db.refresh(row)
     return _to_response(row)

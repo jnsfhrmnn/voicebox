@@ -12,12 +12,7 @@
     "unknownError": "不明なエラー"
   },
   "nav": {
-    "generate": "生成",
-    "stories": "ストーリー",
     "captures": "キャプチャ",
-    "voices": "ボイス",
-    "effects": "エフェクト",
-    "audio": "オーディオ",
     "models": "モデル",
     "settings": "設定",
     "updateBadge": "更新"
@@ -38,9 +33,7 @@
       "file": "ファイル"
     },
     "transcript": {
-      "refined": "整形済み",
       "raw": "生テキスト",
-      "refinedHint": "Qwen3 · {{model}} で整形",
       "rawHint": "Whisper {{model}} で文字起こし"
     },
     "actions": {
@@ -50,8 +43,6 @@
       "dictate": "ディクテーション",
       "stop": "停止",
       "copy": "コピー",
-      "refine": "整形",
-      "reRefine": "再整形",
       "export": "エクスポート",
       "exportDropdownLabel": "形式を選択",
       "exportAudio": "音声 (WAV)",
@@ -950,38 +941,6 @@
         "archive": {
           "title": "音声をアーカイブ",
           "description": "文字起こしと一緒に元の録音も保持します。"
-        }
-      },
-      "refinement": {
-        "title": "整形",
-        "description": "ローカル LLM を任意で実行し、フィラー語、句読点、自己修正を文字起こしから整理します。",
-        "auto": {
-          "title": "文字起こしを自動で整形",
-          "description": "キャプチャごとに実行されます。キャプチャタブで生テキストと整形済みを切り替えることもできます。"
-        },
-        "model": {
-          "title": "整形モデル",
-          "description": "大きなモデルは遅くなりますが、微妙な自己修正や専門用語をより適切に処理します。",
-          "size06": "Qwen3 · 0.6B · 400 MB · {{tail}}",
-          "size17": "Qwen3 · 1.7B · 1.1 GB · {{tail}}",
-          "size40": "Qwen3 · 4B · 2.5 GB · {{tail}}",
-          "tail": {
-            "veryFast": "超高速",
-            "fast": "高速",
-            "fullQuality": "高品質"
-          }
-        },
-        "smartCleanup": {
-          "title": "スマートクリーンアップ",
-          "description": "言い回しを変えずに、フィラー語(えーと、あの、みたいな)を削除し、句読点を補い、大文字小文字を整えます。"
-        },
-        "selfCorrection": {
-          "title": "自己修正を削除",
-          "description": "途中で言い直したとき(「やっぱり違う…」「いや、こうじゃなくて…」)、撤回した部分を削除して最終的な意図のみを残します。"
-        },
-        "preserveTechnical": {
-          "title": "専門用語を保持",
-          "description": "コードの識別子、コマンド名、頭字語を発話どおりに保持します。コード入力欄にディクテーションするときに有効にしてください。"
         }
       },
       "playback": {

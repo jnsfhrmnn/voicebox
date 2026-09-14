@@ -30,8 +30,8 @@ export function DictateWindow() {
 
   // Snapshot of the focused UI element at chord-start, shipped over from
   // Rust on the ``dictate:start`` payload. Held in a ref so it survives
-  // the 1–2 s transcribe + refine window — the paste only fires once the
-  // final text comes back.
+  // the ~1–2 s transcribe window — the paste only fires once the final
+  // text comes back.
   const focusRef = useRef<FocusSnapshot | null>(null);
 
   const session = useCaptureRecordingSession({

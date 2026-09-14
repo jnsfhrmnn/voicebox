@@ -138,8 +138,6 @@ export interface HistoryListResponse {
 
 export type WhisperModelSize = 'base' | 'small' | 'medium' | 'large' | 'turbo';
 
-export type Qwen3ModelSize = '0.6B' | '1.7B' | '4B';
-
 export type CaptureSource = 'dictation' | 'recording' | 'file';
 
 /**
@@ -153,12 +151,6 @@ export interface FocusSnapshot {
   role: string | null;
 }
 
-export interface RefinementFlags {
-  smart_cleanup: boolean;
-  self_correction: boolean;
-  preserve_technical: boolean;
-}
-
 export interface CaptureResponse {
   id: string;
   audio_path: string;
@@ -166,10 +158,7 @@ export interface CaptureResponse {
   language?: string | null;
   duration_ms?: number | null;
   transcript_raw: string;
-  transcript_refined?: string | null;
   stt_model?: string | null;
-  llm_model?: string | null;
-  refinement_flags?: RefinementFlags | null;
   created_at: string;
 }
 
@@ -179,20 +168,14 @@ export interface CaptureListResponse {
 }
 
 /**
- * Response of ``POST /captures``. Adds ``auto_refine`` and ``allow_auto_paste``
- * — the server's current settings captured at request time — so the client
- * can decide whether to chain a refine call and whether to fire the
- * synthetic-paste pipeline without relying on its own (possibly stale) copy
- * of capture_settings.
+ * Response of ``POST /captures``. Adds ``allow_auto_paste`` — the server's
+ * current setting captured at request time — so the client can decide whether
+ * to fire the synthetic-paste pipeline without relying on its own (possibly
+ * stale) copy of capture_settings. JFW-1: kein Refinement — das Transkript
+ * ist Endzustand (Spec).
  */
 export interface CaptureCreateResponse extends CaptureResponse {
-  auto_refine: boolean;
   allow_auto_paste: boolean;
-}
-
-export interface CaptureRefineRequest {
-  flags?: RefinementFlags;
-  model_size?: Qwen3ModelSize;
 }
 
 export interface CaptureRetranscribeRequest {
@@ -203,13 +186,7 @@ export interface CaptureRetranscribeRequest {
 export interface CaptureSettings {
   stt_model: WhisperModelSize;
   language: string;
-  auto_refine: boolean;
-  llm_model: Qwen3ModelSize;
-  smart_cleanup: boolean;
-  self_correction: boolean;
-  preserve_technical: boolean;
   allow_auto_paste: boolean;
-  default_playback_voice_id: string | null;
   /** Whether the global keyboard hotkey is armed. Off by default — turning
    *  this on triggers the macOS Input Monitoring TCC prompt. */
   hotkey_enabled: boolean;

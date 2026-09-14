@@ -118,13 +118,9 @@ def _migrate_capture_settings(engine, inspector, tables: set[str]) -> None:
             "allow_auto_paste BOOLEAN NOT NULL DEFAULT 1",
             "allow_auto_paste",
         )
-    if "default_playback_voice_id" not in columns:
-        _add_column(
-            engine,
-            "capture_settings",
-            "default_playback_voice_id VARCHAR",
-            "default_playback_voice_id",
-        )
+    # JFW-1 (Spec): default_playback_voice_id ist ein TTS-Feld und kein
+    # Zielpfad -- es wird NICHT nachgezogen. Legacy-Spalten aus der fruhen
+    # Iteration entfernt die Alembic-Linie (Revision be53d0afd8cc).
     if "chord_push_to_talk_keys" not in columns:
         _add_column(
             engine,

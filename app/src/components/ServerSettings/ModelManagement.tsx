@@ -52,27 +52,9 @@ async function fetchHuggingFaceModelInfo(repoId: string): Promise<HuggingFaceMod
   return response.json();
 }
 
+// JFW-1 (Transkriptionsprofil): nur STT-Modelle im Register — die TTS-/LLM-
+// Descriptions sind mit den ausgeschlossenen Flächen entfernt worden.
 const MODEL_DESCRIPTIONS: Record<string, string> = {
-  'qwen-tts-1.7B':
-    'High-quality multilingual TTS by Alibaba. Supports 10 languages with natural prosody and voice cloning from short reference audio.',
-  'qwen-tts-0.6B':
-    'Lightweight version of Qwen TTS. Same language support with faster inference, ideal for lower-end hardware.',
-  luxtts:
-    'Lightweight ZipVoice-based TTS designed for high quality voice cloning and 48kHz speech generation at speeds exceeding 150x realtime.',
-  'chatterbox-tts':
-    'Production-grade open source TTS by Resemble AI. Supports 23 languages with voice cloning and emotion exaggeration control.',
-  'chatterbox-turbo':
-    'Streamlined 350M parameter TTS by Resemble AI. High-quality English speech with less compute and VRAM than larger models.',
-  'tada-1b':
-    'HumeAI TADA 1B — English speech-language model built on Llama 3.2 1B. Generates 700s+ of coherent audio with synchronized text-acoustic alignment.',
-  'tada-3b-ml':
-    'HumeAI TADA 3B Multilingual — built on Llama 3.2 3B. Supports 10 languages with high-fidelity voice cloning via text-acoustic dual alignment.',
-  kokoro:
-    'Kokoro 82M by hexgrad. Tiny 82M-parameter TTS that runs at CPU realtime. Supports 8 languages with pre-built voice styles. Apache 2.0 licensed.',
-  'qwen-custom-voice-1.7B':
-    'Qwen3-TTS CustomVoice 1.7B by Alibaba. 9 premium preset voices with instruct-based style control for tone, emotion, and prosody. Supports 10 languages.',
-  'qwen-custom-voice-0.6B':
-    'Qwen3-TTS CustomVoice 0.6B by Alibaba. Lightweight version with the same 9 preset voices and instruct control. Faster inference for lower-end hardware.',
   'whisper-base':
     'Smallest Whisper model (74M parameters). Fast transcription with moderate accuracy.',
   'whisper-small':
@@ -83,12 +65,6 @@ const MODEL_DESCRIPTIONS: Record<string, string> = {
     'Whisper Large (1.5B parameters). Best accuracy for speech-to-text across multiple languages.',
   'whisper-turbo':
     'Whisper Large v3 Turbo. Pruned for significantly faster inference while maintaining near-large accuracy.',
-  'qwen3-0.6b':
-    'Qwen3 0.6B — smallest of the Qwen3 instruct family. Very fast on CPU, runs at ~400 MB quantized on Apple Silicon. Good for dictation refinement and short completions.',
-  'qwen3-1.7b':
-    'Qwen3 1.7B — balanced size and quality. Handles subtle self-corrections and technical vocabulary better than the 0.6B. Runs at ~1.1 GB quantized on Apple Silicon.',
-  'qwen3-4b':
-    'Qwen3 4B — highest quality local refinement and longer-form reasoning. ~2.5 GB quantized on Apple Silicon, ~8 GB at full precision on PyTorch.',
 };
 
 function formatDownloads(n: number): string {

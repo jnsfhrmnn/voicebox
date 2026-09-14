@@ -12,12 +12,7 @@
     "unknownError": "Unknown error"
   },
   "nav": {
-    "generate": "Generate",
-    "stories": "Stories",
     "captures": "Captures",
-    "voices": "Voices",
-    "effects": "Effects",
-    "audio": "Audio",
     "models": "Models",
     "settings": "Settings",
     "updateBadge": "Update"
@@ -38,9 +33,7 @@
       "file": "File"
     },
     "transcript": {
-      "refined": "Refined",
       "raw": "Raw",
-      "refinedHint": "Refined with Qwen3 · {{model}}",
       "rawHint": "Transcribed with Whisper {{model}}"
     },
     "actions": {
@@ -50,8 +43,6 @@
       "dictate": "Dictate",
       "stop": "Stop",
       "copy": "Copy",
-      "refine": "Refine",
-      "reRefine": "Re-refine",
       "export": "Export",
       "exportDropdownLabel": "Export capture as",
       "exportAudio": "Audio (WAV)",
@@ -950,38 +941,6 @@
         "archive": {
           "title": "Archive audio",
           "description": "Keep the original recording alongside every transcript."
-        }
-      },
-      "refinement": {
-        "title": "Refinement",
-        "description": "Optionally run a local LLM over transcripts to clean filler words, punctuation, and self-corrections.",
-        "auto": {
-          "title": "Refine transcripts automatically",
-          "description": "Runs after every capture. You can still toggle between raw and refined in the Captures tab."
-        },
-        "model": {
-          "title": "Refinement model",
-          "description": "Larger models are slower but handle subtle self-corrections and technical vocabulary better.",
-          "size06": "Qwen3 · 0.6B · 400 MB · {{tail}}",
-          "size17": "Qwen3 · 1.7B · 1.1 GB · {{tail}}",
-          "size40": "Qwen3 · 4B · 2.5 GB · {{tail}}",
-          "tail": {
-            "veryFast": "Very fast",
-            "fast": "Fast",
-            "fullQuality": "Full quality"
-          }
-        },
-        "smartCleanup": {
-          "title": "Smart cleanup",
-          "description": "Remove filler words (um, uh, like), restore punctuation, and fix capitalization without rephrasing."
-        },
-        "selfCorrection": {
-          "title": "Remove self-corrections",
-          "description": "When you change your mind mid-sentence (\"actually, no...\", \"wait, I meant...\"), drop the retracted part and keep the final intent."
-        },
-        "preserveTechnical": {
-          "title": "Preserve technical terms",
-          "description": "Keep code identifiers, command names, and acronyms exactly as spoken. Turn on when you dictate into a code prompt."
         }
       },
       "playback": {

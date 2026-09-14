@@ -102,23 +102,14 @@ def create_empty(db_path: Path) -> int:
                 language TEXT,
                 duration_ms INTEGER,
                 transcript_raw TEXT NOT NULL DEFAULT '',
-                transcript_refined TEXT,
                 stt_model TEXT,
-                llm_model TEXT,
-                refinement_flags TEXT,
                 created_at TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS capture_settings (
                 id INTEGER PRIMARY KEY DEFAULT 1,
                 stt_model TEXT NOT NULL DEFAULT 'turbo',
                 language TEXT NOT NULL DEFAULT 'auto',
-                auto_refine BOOLEAN NOT NULL DEFAULT 0,
-                llm_model TEXT NOT NULL DEFAULT '0.6B',
-                smart_cleanup BOOLEAN NOT NULL DEFAULT 1,
-                self_correction BOOLEAN NOT NULL DEFAULT 1,
-                preserve_technical BOOLEAN NOT NULL DEFAULT 1,
                 allow_auto_paste BOOLEAN NOT NULL DEFAULT 1,
-                default_playback_voice_id TEXT,
                 hotkey_enabled BOOLEAN NOT NULL DEFAULT 0,
                 chord_push_to_talk_keys JSON NOT NULL,
                 chord_toggle_to_talk_keys JSON NOT NULL,
