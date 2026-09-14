@@ -101,8 +101,31 @@ def resolve_storage_path(path: str | Path | None) -> Path | None:
 
 
 def get_db_path() -> Path:
-    """Get database file path."""
-    return _data_dir / "voicebox.db"
+    """Get database file path.
+
+    JFW-1 (Spec): die Runtime-DB liegt in ``<Datenroot>/data/jf-whisper.db``
+    (neue App-Identitaet, keine Ueberschreibung der Voicebox-Installation).
+    Eine vorhandene Legacy-``voicebox.db`` im Datenroot wird beim ersten Aufruf
+    nach ``data/jf-whisper.db`` uebernommen (nicht kopiert und dann geloescht —
+    die Datei bleibt an ihrem alten Ort, bis sie migriert ist), damit die
+    Schema-Linie auf dem bestehenden Stand weiterarbeiten kann.
+    """
+    db_dir = _data_dir / "data"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "jf-whisper.db"
+    legacy = _data_dir / "voicebox.db"
+    if not db_path.exists() and legacy.exists():
+        try:
+            import shutil
+
+            shutil.copy2(legacy, db_path)
+            logger.info("Legacy voicebox.db nach %s uebernommen", db_path)
+        except OSError as exc:  # noqa: BLE001 -- fail-closed unten
+            raise RuntimeError(
+                f"Legacy-DB {legacy} konnte nicht nach {db_path} uebernommen "
+                f"werden: {exc}"
+            ) from exc
+    return db_path
 
 
 def get_profiles_dir() -> Path:

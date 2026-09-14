@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "main",
+  "description": "JFW-1: Minimale Capabilities des Hauptfensters (Server-, Modell- und Capture-Verwaltung). Getrennt vom Diktat-Fenster; keine fs/shell-Rechte fuer die Pill. Fs-Schreiben nur in den User-Profilbereich ($HOME/**) — das deckt alle Save-Dialog-Ziele ab, ohne Systembereiche zu erlauben.",
+  "platforms": ["linux", "macOS", "windows"],
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-start-dragging",
+    "dialog:default",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "fs:default",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$HOME/**" }]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "$HOME/**" }]
+    },
+    "shell:allow-open"
+  ]
+}

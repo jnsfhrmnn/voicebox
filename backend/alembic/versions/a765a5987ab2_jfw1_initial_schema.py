@@ -27,6 +27,31 @@ def upgrade() -> None:
     bind = op.get_bind()
     existing = set(sa.inspect(bind).get_table_names())
 
+    # JFW-1: Legacy-TTS-/LLM-Tabellen der Voicebox-Baseline werden hier
+    # kanonisch gedroppt (die reine Alembic-Linie --migrate-only laeuft ohne
+    # init_db()). Die Liste ist identisch zu _FORBIDDEN_TABLES in
+    # backend/database/migrations.py (Profil: database_tables.forbidden).
+    # Der Drop ist idempotent und beruehrt captures/capture_settings nicht —
+    # deren Daten bleiben erhalten.
+    legacy_tables = [
+        "profiles",
+        "profile_samples",
+        "generations",
+        "generation_versions",
+        "stories",
+        "story_items",
+        "projects",
+        "effect_presets",
+        "audio_channels",
+        "channel_device_mappings",
+        "profile_channel_mappings",
+        "generation_settings",
+        "mcp_client_bindings",
+    ]
+    for table in legacy_tables:
+        if table in existing:
+            op.drop_table(table)
+
     if "capture_settings" not in existing:
         op.create_table(
             "capture_settings",

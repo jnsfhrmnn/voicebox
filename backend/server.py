@@ -44,38 +44,55 @@ if getattr(sys, 'frozen', False):
 # version check doesn't block for 30+ seconds loading torch etc.
 if "--version" in sys.argv:
     from backend import __version__
-    print(f"voicebox-server {__version__}")
+    print(f"jf-whisper-server {__version__}")
     sys.exit(0)
 
-# JFW-1 DB-Migrations-Kontrakt (CPU-Early-Entrypoint): Tauri orchestriert die
-# Migration VOR dem Backendstart über diesen Pfad. Er liegt bewusst VOR den
-# Torch/Transformers-Imports — das Schema-Upgrade braucht nur Alembic +
-# SQLAlchemy und muss auch ohne ML-Stack lauffähig sein (Build-/CI-Schritt).
-# Fail-closed: Exit 3 = Start abgelehnt (unbekannter Head, Abbruch,
-# Kontraktverletzung) — die DB bleibt unverändert, Backup liegt in
-# <data_dir>/backups/. Wiederholter Start auf demselben Head ist No-Op.
-if "--migrate" in sys.argv or "--schema-info" in sys.argv:
+# JFW-1 DB-Migrations-Kontrakt (CPU-Early-Entrypoint): Tauri vergleicht den
+# erwarteten Schema-Head und orchestriert die Migration VOR dem Backendstart
+# ueber diesen Pfad. Er liegt bewusst VOR den Torch/Transformers-Imports — das
+# Schema-Upgrade braucht nur Alembic + SQLAlchemy und muss auch ohne ML-Stack
+# lauffaehig sein (Build-/CI-Schritt). Fail-closed: Exit 3 = Start abgelehnt
+# (unbekannter Head, Abbruch, Kontraktverletzung) — die DB bleibt unverändert,
+# Backup liegt in <data_dir>/backups/. Wiederholter Start auf demselben Head
+# ist No-Op. Spec-Namen: --schema-status / --migrate-only (CPU-Artefakt).
+if any(f in sys.argv for f in ("--migrate", "--migrate-only", "--schema-info", "--schema-status")):
     import argparse as _ap
 
     _p = _ap.ArgumentParser(add_help=False)
     _p.add_argument("--migrate", type=str, default=None)
+    _p.add_argument("--migrate-only", dest="migrate_only", type=str, default=None)
     _p.add_argument("--schema-info", dest="schema_info", type=str, default=None)
+    _p.add_argument("--schema-status", dest="schema_status", type=str, default=None)
     _early_args, _ = _p.parse_known_args()
 
-    from backend.schema import MigrationError, run_schema_upgrade, schema_info  # noqa: E402
+    from backend.schema import (  # noqa: E402
+        MigrationError,
+        head_rev,
+        migration_hash,
+        run_schema_upgrade,
+        schema_info,
+        SCHEMA_ID,
+    )
 
-    if _early_args.migrate is not None:
+    migrate_target = _early_args.migrate or _early_args.migrate_only
+    if migrate_target is not None:
         try:
-            run_schema_upgrade(_early_args.migrate)
+            run_schema_upgrade(migrate_target)
         except MigrationError as exc:
             print(f"SCHEMA-FAIL-CLOSED: {exc}", file=sys.stderr)
             sys.exit(3)
         sys.exit(0)
 
-    if _early_args.schema_info is not None:
+    status_target = _early_args.schema_info or _early_args.schema_status
+    if status_target is not None:
         import json as _json_early
 
-        print(_json_early.dumps(schema_info(_early_args.schema_info), indent=2))
+        info = schema_info(status_target)
+        # Spec: Tauri vergleicht den erwarteten Head + Migrationskettenhash.
+        info["expected_head"] = head_rev()
+        info["migration_hash"] = migration_hash()
+        info["schema_id"] = SCHEMA_ID
+        print(_json_early.dumps(info, indent=2))
         sys.exit(0)
 
 import logging
@@ -90,7 +107,7 @@ logger = logging.getLogger(__name__)
 
 # Log startup immediately to confirm binary execution
 logger.info("=" * 60)
-logger.info("voicebox-server starting up...")
+logger.info("jf-whisper-server starting up...")
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Executable: {sys.executable}")
 logger.info(f"Arguments: {sys.argv}")

@@ -80,7 +80,13 @@ def _resolve_relative(mod: str, is_pkg: bool, level: int, module_name: str | Non
 def build_graph() -> dict[str, set[str]]:
     """Modul -> Menge der direkt importierten Module (absolut aufgelöst)."""
     graph: dict[str, set[str]] = {}
+    # Venvs/Build-Artefakte sind kein Produktcode — sie duerfen nicht in den
+    # Importgraph (sonst bricht der Analyzer an binären Test-Dateien von
+    # installierten Paketen).
+    skip_dirs = {".venv", "venv", "node_modules", "__pycache__", "build", "dist"}
     for py in BACKEND.rglob("*.py"):
+        if any(part in skip_dirs for part in py.parts):
+            continue
         parsed = module_name_for_file(py)
         if not parsed:
             continue

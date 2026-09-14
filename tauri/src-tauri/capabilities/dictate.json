@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "dictate",
+  "description": "JFW-1: Minimale Capabilities des Diktat-Fensters (Pill). Keine fs/shell/dialog-Rechte — die Pill spricht nur typisierte Tauri-Kommandos an, die im Rust-State gegen das Fensterlabel gecheckt werden.",
+  "platforms": ["linux", "macOS", "windows"],
+  "windows": ["dictate"],
+  "permissions": [
+    "core:default"
+  ]
+}

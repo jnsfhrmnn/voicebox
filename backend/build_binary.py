@@ -32,11 +32,11 @@ def build_server(cuda=False):
 
     Args:
         cuda: If True, build with CUDA support and name the binary
-              voicebox-server-cuda instead of voicebox-server.
+              jf-whisper-server-cuda instead of jf-whisper-server.
     """
     backend_dir = Path(__file__).parent
 
-    binary_name = "voicebox-server-cuda" if cuda else "voicebox-server"
+    binary_name = "jf-whisper-server-cuda" if cuda else "jf-whisper-server"
 
     # PyInstaller arguments
     # CUDA builds use --onedir so we can split the output into two archives:
@@ -241,14 +241,18 @@ def build_server(cuda=False):
 
     # JFW-1 DB-Schema-Linie: alembic.ini + versions/ werden zur Laufzeit aus
     # der Datei geladen (ScriptDirectory) und müssen daher als Daten gebundlet
-    # werden. Pfade sind relativ zu backend_dir, weil os.chdir(backend_dir)
-    # vor dem PyInstaller-Aufruf läuft — absolut würde in die .spec gebacken.
+    # werden. WICHTIG: das Ziel ist `backend/...`, damit es im Frozen-Layout
+    # exakt dort liegt, wo schema.py hinschaut — Path(__file__).parent ist im
+    # Onefile-Modus `_MEIPASS/backend/` (das backend-Paket), nicht die _MEIPASS-
+    # Wurzel. Quellbaum und Binary müssen denselben relativen Layout haben.
     args.extend(
         [
             "--add-data",
-            f"{backend_dir / 'alembic.ini'}{os.pathsep}alembic.ini",
+            f"{backend_dir / 'alembic.ini'}{os.pathsep}backend/alembic.ini",
+            # Komplettes alembic/-Verzeichnis (env.py + versions/) — Alembic
+            # laedt env.py aus dem ScriptDirectory, nicht nur die Revisionen.
             "--add-data",
-            f"{backend_dir / 'alembic' / 'versions'}{os.pathsep}alembic/versions",
+            f"{backend_dir / 'alembic'}{os.pathsep}backend/alembic",
         ]
     )
 
@@ -328,7 +332,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cuda",
         action="store_true",
-        help="Build CUDA-enabled binary (voicebox-server-cuda)",
+        help="Build CUDA-enabled binary (jf-whisper-server-cuda)",
     )
     cli_args = parser.parse_args()
     build_server(cuda=cli_args.cuda)

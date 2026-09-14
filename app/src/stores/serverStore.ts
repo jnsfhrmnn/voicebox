@@ -80,7 +80,8 @@ export const useServerStore = create<ServerStore>()(
       setCustomModelsDir: (dir) => set({ customModelsDir: dir }),
     }),
     {
-      name: 'voicebox-server',
+      // JFW-1: eigener Persist-Key (neue App-Identitaet, kein Voicebox-State).
+      name: 'jf-whisper-server',
     },
   ),
 );

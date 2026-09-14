@@ -369,7 +369,7 @@ exit 1
 // Every sidecar listed in tauri.conf.json's ``externalBin`` needs a
 // file on disk at compile time, even in dev. Add to this list whenever
 // a new sidecar is introduced.
-const SIDECAR_BASE_NAMES = ['voicebox-server', 'voicebox-mcp'];
+const SIDECAR_BASE_NAMES = ['jf-whisper-server'];
 
 function main() {
   const targetTriple = getTargetTriple();

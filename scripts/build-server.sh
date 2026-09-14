@@ -39,9 +39,6 @@ copy_sidecar() {
 }
 
 python build_binary.py
-copy_sidecar voicebox-server
-
-python build_binary.py --shim
-copy_sidecar voicebox-mcp
+copy_sidecar jf-whisper-server
 
 echo "Build complete!"

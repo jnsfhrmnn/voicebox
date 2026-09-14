@@ -33,7 +33,13 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # JFW-1: Alembic-Batchmodus (Spec) — SQLite braucht Batch, um
+        # ALTER-TABLE-Operationen als Table-Rebuild auszufuehren.
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

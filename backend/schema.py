@@ -36,6 +36,7 @@ Aufruf::
 """
 
 import hashlib
+import json
 import os
 import shutil
 import sqlite3
@@ -87,11 +88,118 @@ def known_revs() -> set[str]:
 
 
 def migration_hash() -> str:
-    """Stabiler Hash ueber die Revision-Kette (Manifest-Vergleich CPU/CUDA)."""
-    h = hashlib.sha256()
-    for rev, down in _chain():
-        h.update(f"{rev}->{down}:".encode("utf-8"))
-    return h.hexdigest()[:16]
+    """Migrationskettenhash (Spec JFW-1).
+
+    Topologisch geordnetes kanonisches Manifest aus Revision/``down_revision``,
+    POSIX-Relativpfad und SHA-256 jedes Migrations-/Metadatenblobs. Die Blobs
+    werden als UTF-8/LF erzwungen gehasht; sortiertes kanonisches JSON erzeugt
+    in CPU- und CUDA-Builds denselben Hash.
+    """
+    script = _script_dir()
+    versions_dir = Path(script.dir) if hasattr(script, "dir") else None
+    entries: list[dict] = []
+    # Topologische Reihenfolge: walk_revisions() liefert alt -> neu.
+    for rev in script.walk_revisions():
+        rel = ""
+        try:
+            blob_path = Path(rev.path)
+            if versions_dir is not None and versions_dir.exists():
+                rel = blob_path.relative_to(versions_dir).as_posix()
+            else:
+                rel = blob_path.name
+        except Exception:  # noqa: BLE001 -- Pfad ist optional im Manifest
+            rel = ""
+        try:
+            raw = Path(rev.path).read_bytes()
+        except OSError:
+            raw = b""
+        # UTF-8/LF erzwungen: CRLF -> LF, dann SHA-256.
+        normalized = raw.replace(b"\r\n", b"\n")
+        entries.append(
+            {
+                "revision": rev.revision,
+                "down_revision": rev.down_revision,
+                "path": rel,
+                "sha256": hashlib.sha256(normalized).hexdigest(),
+            }
+        )
+    canonical = json.dumps(entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+
+# ---------------------------------------------------------------------------
+# OS-Schema-Lock (Spec JFW-1): Jeder normale DB-Opener haelt eine gemeinsame
+# Lock; die Migration benoetigt exklusiven Zugriff. Der Lock liegt in einer
+# eigenen Datei neben der DB (<data>/.jfwhisper-schema.lock), damit er auch
+# vor dem ersten DB-Zugriff funktioniert. Windows: msvcrt, POSIX: fcntl.
+# ---------------------------------------------------------------------------
+
+class SchemaLock:
+    """Kontext-Manager fuer das OS-Schema-Lock (shared/exclusive)."""
+
+    def __init__(self, db_path: Path, exclusive: bool):
+        self._lock_file = db_path.parent / ".jfwhisper-schema.lock"
+        self._exclusive = exclusive
+        self._fh = None
+
+    def __enter__(self) -> "SchemaLock":
+        import os
+
+        self._lock_file.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self._lock_file, "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                # Windows: byte-range lock (1 Byte reicht).
+                self._fh.seek(0)
+                mode = 2 if self._exclusive else 1  # LK_NBLCK | LK_RLCK
+                try:
+                    msvcrt.locking(self._fh.fileno(), mode, 1)
+                except OSError as exc:
+                    raise MigrationError(
+                        "Schema-Lock nicht erhaeltlich (anderer Prozess haelt "
+                        f"{'exklusiv' if self._exclusive else 'shared'} Zugriff). "
+                        "Start abgelehnt."
+                    ) from exc
+            else:
+                import fcntl
+
+                flag = fcntl.LOCK_EX if self._exclusive else fcntl.LOCK_SH
+                try:
+                    fcntl.flock(self._fh.fileno(), flag | fcntl.LOCK_NB)
+                except OSError as exc:
+                    raise MigrationError(
+                        "Schema-Lock nicht erhaeltlich (anderer Prozess haelt "
+                        f"{'exklusiv' if self._exclusive else 'shared'} Zugriff). "
+                        "Start abgelehnt."
+                    ) from exc
+        except Exception:
+            self._fh.close()
+            self._fh = None
+            raise
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._fh is not None:
+            try:
+                import os
+
+                if os.name == "nt":
+                    import msvcrt
+
+                    self._fh.seek(0)
+                    msvcrt.locking(self._fh.fileno(), 8, 1)  # LK_UNLCK
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            finally:
+                self._fh.close()
+                self._fh = None
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +223,20 @@ def current_rev(con: sqlite3.Connection) -> str | None:
     return row[0] if row else None
 
 
+def _wal_checkpoint(db_path: Path) -> None:
+    """WAL-Checkpoint (Spec JFW-1): die WAL wird in die Hauptdatei zurueckge-
+    geschrieben, bevor das Backup koerpiert wird — sonst enthaelt das Backup
+    nur den Stand vor der letzten Checkpoint."""
+    if not db_path.exists():
+        return
+    con = _connect(db_path)
+    try:
+        # TRUNCATE: WAL in die DB zurueckgeschrieben und geleert.
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        con.close()
+
+
 def _backup(db_path: Path) -> Path | None:
     """Kopiert die DB-Datei nach <data_dir>/backups/ (letzte BACKUP_KEEP)."""
     data_dir = db_path.parent
@@ -123,10 +245,10 @@ def _backup(db_path: Path) -> Path | None:
         return None
     backup_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    target = backup_dir / f"voicebox.db.{ts}.bak"
+    target = backup_dir / f"{db_path.name}.{ts}.bak"
     shutil.copy2(db_path, target)
     # Alte Backups aufräumen (neueste BACKUP_KEEP behalten).
-    backups = sorted(backup_dir.glob("voicebox.db.*.bak"))
+    backups = sorted(backup_dir.glob(f"{db_path.name}.*.bak"))
     for old in backups[:-BACKUP_KEEP]:
         try:
             old.unlink()
@@ -175,6 +297,11 @@ def run_schema_upgrade(db_path=None, engine=None) -> None:
         db_path = Path(url_env.removeprefix("sqlite:///"))
     db_path = Path(db_path)
 
+    # Der Parent-Verzeichnis muss existieren (Produktion: Tauri legt nur den
+    # Datenroot an; <Datenroot>/data entsteht hier — die Migration laeuft vor
+    # dem Serverstart und damit vor config.get_db_path()).
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
     # Pooled Connections loesen, bevor wir selbst verbinden.
     if engine is not None:
         try:
@@ -200,46 +327,70 @@ def run_schema_upgrade(db_path=None, engine=None) -> None:
             con.commit()
             return
 
-        backup = _backup(db_path)
-        try:
-            from alembic import command  # type: ignore[import-untyped]
-            from alembic.config import Config as AlembicConfig  # type: ignore[import-untyped]
-        except ImportError as exc:  # pragma: no cover -- Build-Fehler
-            raise MigrationError(
-                f"Alembic ist nicht im Binary gebundlet ({exc}) — "
-                "Schema-Linie nicht lauffähig."
-            ) from exc
+        # Spec JFW-1: Migration benoetigt exklusiven OS-Schema-Lock fuer den
+        # gesamten Lauf (Backup + Upgrade + Integritaetscheck).
+        lock = SchemaLock(db_path, exclusive=True)
+        with lock:
+            # WAL-Checkpoint VOR dem Backup, damit das Backup den aktuellen
+            # Stand enthaelt (nicht nur bis zur letzten Checkpoint).
+            _wal_checkpoint(db_path)
+            backup = _backup(db_path)
 
-        backend_dir = Path(__file__).resolve().parent
-        os.environ["JFWHISPER_DB_URL"] = f"sqlite:///{db_path}"
-        cfg = AlembicConfig(str(backend_dir / "alembic.ini"))
-        cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+            try:
+                from alembic import command  # type: ignore[import-untyped]
+                from alembic.config import Config as AlembicConfig  # type: ignore[import-untyped]
+            except ImportError as exc:  # pragma: no cover -- Build-Fehler
+                raise MigrationError(
+                    f"Alembic ist nicht im Binary gebundlet ({exc}) — "
+                    "Schema-Linie nicht lauffähig."
+                ) from exc
 
-        try:
-            command.upgrade(cfg, "head")
-        except MigrationError:
-            raise
-        except Exception as exc:  # noqa: BLE001 -- Abbruch = fail-closed
-            raise MigrationError(
-                f"Migration abgebrochen ({exc}). Backup: {backup}. "
-                "DB-Zustand ist recoverbar."
-            ) from exc
+            backend_dir = Path(__file__).resolve().parent
+            os.environ["JFWHISPER_DB_URL"] = f"sqlite:///{db_path}"
+            cfg = AlembicConfig(str(backend_dir / "alembic.ini"))
+            cfg.set_main_option("script_location", str(backend_dir / "alembic"))
 
-        # Nach dem Upgrade: Meta schreiben + Kontrakt-Check.
-        _write_schema_meta(con)
-        con.commit()
+            try:
+                command.upgrade(cfg, "head")
+            except MigrationError:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- Abbruch = fail-closed
+                raise MigrationError(
+                    f"Migration abgebrochen ({exc}). Backup: {backup}. "
+                    "DB-Zustand ist recoverbar."
+                ) from exc
 
-        tables = {r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
-        forbidden = tables - set(ALLOWED_TABLES) - {"alembic_version", "schema_meta"}
-        if forbidden:
-            raise MigrationError(
-                f"Schema-Kontrakt verletzt nach Upgrade: unerwartete Tabellen "
-                f"{sorted(forbidden)}. Backup: {backup}."
-            )
+            # Nach dem Upgrade: Meta schreiben + abschliessender Integritaetscheck.
+            _write_schema_meta(con)
+            con.commit()
+
+            errors = integrity_check(con, db_path)
+            if errors:
+                raise MigrationError(
+                    "Integritaetscheck nach Upgrade fehlgeschlagen: "
+                    + "; ".join(errors)
+                    + f". Backup: {backup}."
+                )
     finally:
         con.close()
+
+
+def integrity_check(con: sqlite3.Connection, db_path: Path | None = None) -> list[str]:
+    """Abschliessender Integritaetscheck (Spec JFW-1). Leere Liste = OK."""
+    errors: list[str] = []
+    rev = current_rev(con)
+    if rev != head_rev():
+        errors.append(f"Head-Drift: DB bei {rev!r}, erwartet {head_rev()!r}")
+    tables = {r[0] for r in con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    forbidden = tables - set(ALLOWED_TABLES) - {"alembic_version", "schema_meta"}
+    if forbidden:
+        errors.append(f"Unerwartete Tabellen: {sorted(forbidden)}")
+    fk_violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if fk_violations:
+        errors.append(f"Foreign-Key-Verletzungen: {len(fk_violations)}")
+    return errors
 
 
 def schema_info(db_path) -> dict:
@@ -266,10 +417,20 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
     try:
-        if "--info" in flags:
-            import json
-
-            print(json.dumps(schema_info(args[0] if args else None), indent=2))
+        if "--schema-status" in flags or "--info" in flags:
+            # Nur Status, kein Schreibzugriff. Meldet Head, aktuelle Revision,
+            # Migrationskettenhash und Schema-ID als JSON (Tauri vergleicht den
+            # erwarteten Head VOR dem Serverstart).
+            info = schema_info(args[0] if args else None)
+            info["expected_head"] = head_rev()
+            info["migration_hash"] = migration_hash()
+            info["schema_id"] = SCHEMA_ID
+            print(json.dumps(info, indent=2))
+        elif "--migrate-only" in flags:
+            # Exklusiver Upgrade-Lauf (WAL-Checkpoint + Backup + Batchmodus +
+            # abschliessender Integritaetscheck). Nur das gebuendelte CPU-Artefakt.
+            run_schema_upgrade(args[0] if args else None)
+            print("schema migrate-only OK")
         else:
             run_schema_upgrade(args[0] if args else None)
             print("schema upgrade OK")

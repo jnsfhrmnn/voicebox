@@ -2,14 +2,14 @@
 Package the PyInstaller --onedir CUDA build into two archives.
 
 Takes the PyInstaller --onedir output directory and splits it into:
-  1. voicebox-server-cuda.tar.gz  — server core (exe + non-NVIDIA deps)
+  1. jf-whisper-server-cuda.tar.gz  — server core (exe + non-NVIDIA deps)
   2. cuda-libs-cu128.tar.gz       — NVIDIA runtime libraries only
   3. cuda-libs.json                — version manifest for the CUDA libs
 
 Usage:
-    python scripts/package_cuda.py backend/dist/voicebox-server-cuda/
-    python scripts/package_cuda.py backend/dist/voicebox-server-cuda/ --output release-assets/
-    python scripts/package_cuda.py backend/dist/voicebox-server-cuda/ --cuda-libs-version cu128-v1
+    python scripts/package_cuda.py backend/dist/jf-whisper-server-cuda/
+    python scripts/package_cuda.py backend/dist/jf-whisper-server-cuda/ --output release-assets/
+    python scripts/package_cuda.py backend/dist/jf-whisper-server-cuda/ --cuda-libs-version cu128-v1
 """
 
 import argparse
@@ -140,14 +140,14 @@ def package(
     # Create server core archive
     # Files are stored relative to the archive root (no parent directory prefix)
     # so extracting to backends/cuda/ puts everything at the right level.
-    server_archive = output_dir / "voicebox-server-cuda.tar.gz"
+    server_archive = output_dir / "jf-whisper-server-cuda.tar.gz"
     print(f"\nCreating server core archive: {server_archive.name}")
     with tarfile.open(server_archive, "w:gz") as tar:
         for rel_str, full_path in core_files:
             tar.add(full_path, arcname=rel_str)
     server_sha = sha256_file(server_archive)
-    (output_dir / "voicebox-server-cuda.tar.gz.sha256").write_text(
-        f"{server_sha}  voicebox-server-cuda.tar.gz\n"
+    (output_dir / "jf-whisper-server-cuda.tar.gz.sha256").write_text(
+        f"{server_sha}  jf-whisper-server-cuda.tar.gz\n"
     )
     print(f"  Size: {server_archive.stat().st_size / (1024**2):.1f} MB")
     print(f"  SHA-256: {server_sha[:16]}...")
@@ -197,7 +197,7 @@ def main():
     parser.add_argument(
         "input",
         type=Path,
-        help="Path to PyInstaller --onedir output directory (e.g. backend/dist/voicebox-server-cuda/)",
+        help="Path to PyInstaller --onedir output directory (e.g. backend/dist/jf-whisper-server-cuda/)",
     )
     parser.add_argument(
         "--output",

@@ -117,50 +117,7 @@ pub fn show_dictate_window(app: &tauri::AppHandle) {
     let _ = window.show();
 }
 
-const LEGACY_PORT: u16 = 8000;
 pub(crate) const SERVER_PORT: u16 = 17493;
-
-/// Find a voicebox-server process listening on a given port (Windows only).
-///
-/// Uses PowerShell `Get-NetTCPConnection` to look up the PID owning the port,
-/// then verifies via `tasklist` that it's a voicebox process. The caller is
-/// responsible for checking port occupancy first (e.g. `TcpStream::connect_timeout`).
-/// Replaces the previous `netstat -ano` approach which failed on systems with
-/// corrupted system DLLs (see #277).
-#[cfg(windows)]
-fn find_voicebox_pid_on_port(port: u16) -> Option<u32> {
-    use std::process::Command;
-
-    // Use PowerShell's Get-NetTCPConnection to find the PID listening on the port.
-    // This is a built-in cmdlet that doesn't depend on netstat.exe.
-    let ps_script = format!(
-        "Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess",
-        port
-    );
-    if let Ok(output) = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_script])
-        .output()
-    {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        for line in output_str.lines() {
-            if let Ok(pid) = line.trim().parse::<u32>() {
-                // Verify this PID is a voicebox process
-                if let Ok(tasklist_output) = Command::new("tasklist")
-                    .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
-                    .output()
-                {
-                    let tasklist_str = String::from_utf8_lossy(&tasklist_output.stdout);
-                    if tasklist_str.to_lowercase().contains("voicebox") {
-                        return Some(pid);
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
 struct ServerState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     server_pid: Mutex<Option<u32>>,
@@ -180,11 +137,66 @@ struct ServerState {
 /// Produktionslayout (tauri build): die Sidecar liegt neben dem App-Exe
 /// (externalBin aus tauri.conf.json). Dev-Fallback: das binaries/-Verzeichnis
 /// des src-tauri-Projekts (dort liegen die Platzhalter von setup-dev-sidecar.js).
+/// JFW-1 (Spec): Single-Instance-Lock pro Datenroot.
+///
+/// Der Lock liegt unter `<Datenroot>/.jfwhisper-instance.lock` und traegt die
+/// PID der laufenden Instanz. Ein toter Prozess (Stale-Lock) wird uebernommen;
+/// eine lebende zweite Instanz wird fail-closed abgelehnt — zwei Instanzen
+/// duerfen nicht auf denselben Datenroot zugreifen.
+fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<(), String> {
+    let lock_path = data_dir.join(".jfwhisper-instance.lock");
+
+    if let Ok(content) = std::fs::read_to_string(&lock_path) {
+        let pid_str: String = content.lines().next().unwrap_or("").trim().to_string();
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            if is_process_alive(pid) {
+                return Err(format!(
+                    "JF Whisper laeuft bereits am Datenroot {} (PID {}). Schliessen Sie die andere Instanz oder waehlen Sie einen anderen Datenroot.",
+                    data_dir.display(),
+                    pid
+                ));
+            }
+            println!("Stale Instance-Lock (PID {} tot) wird uebernommen", pid);
+        }
+    }
+
+    let own_pid = std::process::id();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_default();
+    std::fs::write(&lock_path, format!("{}\n{}", own_pid, ts))
+        .map_err(|e| format!("Instance-Lock konnte nicht geschrieben werden: {}", e))?;
+    Ok(())
+}
+
+/// Ist der Prozess mit dieser PID noch aktiv? (Windows: tasklist, POSIX: kill -0)
+fn is_process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .output()
+            .ok();
+        match output {
+            Some(o) => o.status.success() && String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let status = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output();
+        matches!(status, Ok(o) if o.status.success())
+    }
+}
+
 fn resolve_sidecar_path() -> std::path::PathBuf {
     let exe_name = if cfg!(windows) {
-        "voicebox-server-x86_64-pc-windows-msvc.exe"
+        "jf-whisper-server-x86_64-pc-windows-msvc.exe"
     } else {
-        "voicebox-server-x86_64-unknown-linux-gnu"
+        "jf-whisper-server-x86_64-unknown-linux-gnu"
     };
     // 1) Neben dem App-Exe (Produktion).
     if let Ok(exe_dir) = std::env::current_exe() {
@@ -233,59 +245,6 @@ async fn start_server(
         // JFW-1: Port-Wiederverwendung entfernt — dynamischer Port + Handshake.
     }
 
-    // Kill any orphaned voicebox-server from previous session on legacy port 8000
-    // This handles upgrades from older versions that used a fixed port
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("lsof")
-            .args(["-i", &format!(":{}", LEGACY_PORT), "-sTCP:LISTEN"])
-            .output()
-        {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            for line in output_str.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let command = parts[0];
-                    let pid_str = parts[1];
-                    
-                    if command.contains("voicebox") {
-                        if let Ok(pid) = pid_str.parse::<i32>() {
-                            println!("Found orphaned voicebox-server on legacy port {} (PID: {}, CMD: {}), killing it...", LEGACY_PORT, pid, command);
-                            let _ = Command::new("kill")
-                                .args(["-9", "--", &format!("-{}", pid)])
-                                .output();
-                            let _ = Command::new("kill")
-                                .args(["-9", &pid.to_string()])
-                                .output();
-                        }
-                    } else {
-                        println!("Legacy port {} is in use by non-voicebox process: {} (PID: {}), not killing", LEGACY_PORT, command, pid_str);
-                    }
-                }
-            }
-        }
-    }
-    
-    #[cfg(windows)]
-    {
-        use std::net::TcpStream;
-        if TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", LEGACY_PORT).parse().unwrap(),
-            std::time::Duration::from_secs(1),
-        ).is_ok() {
-            if let Some(pid) = find_voicebox_pid_on_port(LEGACY_PORT) {
-                println!("Found orphaned voicebox-server on legacy port {} (PID: {}), killing it...", LEGACY_PORT, pid);
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .output();
-            }
-        }
-    }
-    
-    // Brief wait for port to be released
-    std::thread::sleep(std::time::Duration::from_millis(200));
-
     // JFW-1: eigener Datenroot %LOCALAPPDATA%\JFWhisper (Profil: app_identity.data_root).
     // Die produktive Voicebox-Installation unter sh.voicebox.app bleibt unangetastet.
     let data_dir = {
@@ -300,6 +259,10 @@ async fn start_server(
     std::fs::create_dir_all(&data_dir)
         .map_err(|e| format!("Failed to create data dir: {}", e))?;
 
+    // JFW-1 (Spec): Single-Instance-Lock pro Datenroot — fail-closed bei
+    // zweiter Instanz, Stale-PID wird uebernommen.
+    acquire_instance_lock(&data_dir)?;
+
     println!("=================================================================");
     println!("Starting voicebox-server sidecar");
     println!("Data directory: {:?}", data_dir);
@@ -308,9 +271,9 @@ async fn start_server(
     let cuda_binary = {
         let cuda_dir = data_dir.join("backends").join("cuda");
         let cuda_name = if cfg!(windows) {
-            "voicebox-server-cuda.exe"
+            "jf-whisper-server-cuda.exe"
         } else {
-            "voicebox-server-cuda"
+            "jf-whisper-server-cuda"
         };
         let exe_path = cuda_dir.join(cuda_name);
         if exe_path.exists() {
@@ -356,7 +319,7 @@ async fn start_server(
         }
     };
 
-    let sidecar_result = app.shell().sidecar("voicebox-server");
+    let sidecar_result = app.shell().sidecar("jf-whisper-server");
 
     let mut sidecar = match sidecar_result {
         Ok(s) => s,
@@ -408,26 +371,44 @@ async fn start_server(
         .ok_or_else(|| "Invalid data dir path".to_string())?
         .to_string();
 
-    // JFW-1 DB-Migrations-Kontrakt: Tauri orchestriert die Migration VOR dem
-    // Backendstart über den gebündelten CPU-Early-Entrypoint des Sidecars.
-    // Fail-closed: jeder Exit ≠ 0 (unbekannter Head, Abbruch, Kontraktverletzung)
-    // stoppt den Start — weder CPU noch CUDA starten auf dieser DB. Die DB
-    // bleibt unverändert; das Backup liegt in <data_dir>/backups/.
-    // Dev-Modus: die Sidecar-Binary ist ein Platzhalter (setup-dev-sidecar.js),
-    // daher läuft die Migration dort über init_db() im Python-Server selbst.
+    // JFW-1 DB-Migrations-Kontrakt (Spec): Tauri vergleicht den erwarteten
+    // Schema-Head ueber den leichten CPU-Early-Entrypoint VOR jedem Serverstart
+    // und orchestriert die Migration. Fail-closed: jeder Exit != 0 (unbekannter
+    // Head, Abbruch, Kontraktverletzung) stoppt den Start — weder CPU noch CUDA
+    // starten auf dieser DB. Die DB bleibt unveraendert; das Backup liegt in
+    // <data_dir>/backups/. Dev-Modus: die Sidecar-Binary ist ein Platzhalter
+    // (setup-dev-sidecar.js), daher laeuft die Migration dort ueber init_db()
+    // im Python-Server selbst.
     #[cfg(not(debug_assertions))]
     {
-        let db_path = data_dir.join("voicebox.db");
-        let migrate_cmd = if cuda_binary.is_some() {
-            // CUDA-Binary: dieselbe Schema-Linie, onedir-Layout (cwd = Verzeichnis).
-            std::process::Command::new(cuda_binary.as_ref().unwrap())
-                .current_dir(cuda_binary.as_ref().unwrap().parent().unwrap())
-        } else {
-            let sidecar_exe = resolve_sidecar_path();
-            std::process::Command::new(&sidecar_exe)
-        };
+        let db_path = data_dir.join("data").join("jf-whisper.db");
+
+        // 1) Schema-Status: erwarteter Head + Migrationskettenhash (kein
+        //    Schreibzugriff). Abweichung vom gebuendelten Stand = Start abgelehnt.
+        //    Spec: NUR das gebuendelte CPU-Artefakt besitzt --schema-status /
+        //    --migrate-only — die Operationen laufen daher immer ueber die
+        //    CPU-Binary, nie ueber CUDA.
+        let sidecar_exe = resolve_sidecar_path();
+        let mut status_cmd = std::process::Command::new(&sidecar_exe);
+        let status_output = status_cmd
+            .arg("--schema-status")
+            .arg(&db_path)
+            .output()
+            .map_err(|e| format!("Schema-Status konnte nicht gestartet werden: {}", e))?;
+        if !status_output.status.success() {
+            let stderr = String::from_utf8_lossy(&status_output.stderr);
+            return Err(format!(
+                "DB-Schema-Status fehlgeschlagen (Exit {}): {}. Start abgelehnt.",
+                status_output.status.code().unwrap_or(-1),
+                stderr.trim()
+            ));
+        }
+
+        // 2) Migration: exklusiver Upgrade-Lauf mit WAL-Checkpoint, Backup,
+        //    Batchmodus und abschliessendem Integritaetscheck (CPU-Binary).
+        let mut migrate_cmd = std::process::Command::new(&sidecar_exe);
         let output = migrate_cmd
-            .arg("--migrate")
+            .arg("--migrate-only")
             .arg(&db_path)
             .output()
             .map_err(|e| format!("Schema-Migration konnte nicht gestartet werden: {}", e))?;
