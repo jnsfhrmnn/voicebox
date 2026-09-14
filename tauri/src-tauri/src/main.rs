@@ -12,7 +12,6 @@ mod input_monitoring;
 #[cfg(desktop)]
 mod key_codes;
 mod keyboard_layout;
-mod speak_monitor;
 mod sidecar;
 mod synthetic_keys;
 
@@ -193,22 +192,33 @@ fn is_process_alive(pid: u32) -> bool {
 }
 
 fn resolve_sidecar_path() -> std::path::PathBuf {
-    let exe_name = if cfg!(windows) {
-        "jf-whisper-server-x86_64-pc-windows-msvc.exe"
-    } else {
-        "jf-whisper-server-x86_64-unknown-linux-gnu"
-    };
-    // 1) Neben dem App-Exe (Produktion).
-    if let Ok(exe_dir) = std::env::current_exe() {
-        if let Some(parent) = exe_dir.parent() {
-            let candidate = parent.join(exe_name);
+    // JFW-1 (Spec): Das Pre-Flight muss EXAKT dieselbe Binary auflösen wie der
+    // Runtime-Spawn ueber `app.shell().sidecar("jf-whisper-server")`. Tauri löst
+    // den Sidecar relativ zum App-Exe auf: <exe_dir>/jf-whisper-server[.exe] —
+    // OHNE Target-Triple (tauri-build legt das externalBin so neben dem Exe ab).
+    // Würde das Pre-Flight eine andere Datei prüfen als die, die danach gestartet
+    // wird, migrierte es ins Leere (falsche DB / falscher Head) — deshalb identische
+    // Auflösung wie relative_command_path() im Shell-Plugin.
+    const BASE: &str = "jf-whisper-server";
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = if cfg!(windows) {
+                parent.join(format!("{BASE}.exe"))
+            } else {
+                parent.join(BASE)
+            };
             if candidate.exists() {
                 return candidate;
             }
         }
     }
-    // 2) Dev-Layout: tauri/src-tauri/binaries/ (relativ zum CWD des App-Prozesses).
-    std::path::PathBuf::from("tauri/src-tauri/binaries").join(exe_name)
+    // Dev-Fallback (in Release nicht erreichbar — das Pre-Flight ist debug-gated).
+    let dev = std::path::PathBuf::from("tauri/src-tauri/binaries");
+    if cfg!(windows) {
+        dev.join(format!("{BASE}.exe"))
+    } else {
+        dev.join(BASE)
+    }
 }
 
 #[command]
@@ -1235,20 +1245,16 @@ pub fn run() {
                     }
                 });
 
-                // Agent-initiated speech (voicebox.speak over MCP or POST /speak)
-                // pops the pill up so the user can see what's coming out of their
-                // machine. The `dictate:show` listener is kept for any frontend
-                // caller that wants to force-surface the pill directly, but the
-                // primary source is `speak_monitor` below — Rust subscribes to
-                // the backend /events/speak SSE stream so the pill surfaces even
-                // when no JS window is active.
+                // JFW-1: TTS-/SPEAK-Pfad entfernt — der `dictate:show`-Listener
+                // bleibt für Frontend-Aufrufe, die das Pill-Fenster explizit
+                // erzwingen wollen. Der speak_monitor (Backend-SSE /events/speak)
+                // ist mit dem LLM-/TTS-Cut entfallen.
                 let handle_for_show = app.handle().clone();
                 app.handle().listen("dictate:show", move |_event| {
                     show_dictate_window(&handle_for_show);
                 });
 
                 ensure_dictate_window(app.handle());
-                speak_monitor::spawn_speak_monitor(app.handle().clone());
             }
 
             // Hide title bar icon on Windows

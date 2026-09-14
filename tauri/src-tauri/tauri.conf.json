@@ -61,7 +61,7 @@
   },
   "plugins": {
     "shell": {
-      "open": []
+      "open": false
     }
   }
 }
