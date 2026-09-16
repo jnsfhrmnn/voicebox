@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { AdmissionOutcome, BackendVariant, SupervisorSnapshot } from './supervisor';
-import { admitJob, getSupervisorSnapshot, onSupervisorChange, requestBackendSwitch } from './supervisor';
+import { admitJob, getSupervisorSnapshot, installCudaAddon, onSupervisorChange, removeCudaAddon, repairCudaAddon, requestBackendSwitch } from './supervisor';
 
 export interface UseSupervisorResult {
   snapshot: SupervisorSnapshot | null;
@@ -16,6 +16,12 @@ export interface UseSupervisorResult {
   admit: (requestedGeneration?: number) => Promise<AdmissionOutcome>;
   /** Nutzerinitiiertes Backend-Switch-Request (B9); CUDA fail-closed bis Block (d). */
   requestSwitch: (target: BackendVariant) => Promise<void>;
+  /** CUDA-Addon installieren (Block d, B9 — nur nutzerinitiiert). */
+  installAddon: () => Promise<void>;
+  /** Defektes Addon reparieren (Block d, B9). */
+  repairAddon: () => Promise<void>;
+  /** Installiertes Addon entfernen (Block d, B9). */
+  removeAddon: () => Promise<void>;
 }
 
 export function useSupervisor(): UseSupervisorResult {
@@ -51,6 +57,9 @@ export function useSupervisor(): UseSupervisorResult {
 
   const admit = useCallback((requestedGeneration?: number) => admitJob(requestedGeneration), []);
   const requestSwitch = useCallback((target: BackendVariant) => requestBackendSwitch(target), []);
+  const installAddon = useCallback(() => installCudaAddon(), []);
+  const repairAddon = useCallback(() => repairCudaAddon(), []);
+  const removeAddon = useCallback(() => removeCudaAddon(), []);
 
-  return { snapshot, admit, requestSwitch };
+  return { snapshot, admit, requestSwitch, installAddon, repairAddon, removeAddon };
 }

@@ -1,13 +1,26 @@
-import { Cpu } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Cpu, Loader2, ShieldCheck, Wrench, Trash2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { HealthResponse } from '@/lib/api/types';
+import { apiClient } from '@/lib/api/client';
 import { useServerHealth } from '@/lib/hooks/useServer';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils/cn';
+import { useSupervisor } from '@/features/backend/useSupervisor';
 
 /**
- * jf-whisper-Profil: read-only GPU-Info. Der Voicebox-CUDA-Download, die
- * Runtime-Installation und der CUDA-Switch sind bis JFW-12 aus dem aktiven
- * Produktprofil entfernt (verbotener cuda-Router) — es bleibt nur die
- * Health-basierte Beschleuniger-Anzeige.
+ * jf-whisper-Profil: GPU-/Backend-Verwaltung (JFW-12 Block f, Spec A).
+ *
+ * Fünf Sektionen nach der User-Facing-Struktur:
+ *   1. Betriebsmodus      — angefordert / tatsächlich aktiv / Modellbereitschaft + Generation / Phase
+ *   2. Laufende Arbeit    — aktive und wartende Aufträge (Tasks-API)
+ *   3. CUDA-Addon         — Phase, Download/Verifikation/Installation, Updateprüfung, Reparieren | Entfernen
+ *   4. Wechselprogress    — geordnete Phasen: Admission → Drain → Ziel prüfen → Prozessbaum → VRAM ×2
+ *   5. Letzte Switch-Evidence — inhaltsfrei (Operation, Richtung, Generationen, Ergebnis)
+ *
+ * Der Webview spricht den Sidecar nie für Backend-Zustand an — alles läuft über
+ * die typisierten Supervisor-Commands/Events (D). Tasks sind ein separater
+ * Bereich und nutzen die Tasks-API wie der Rest des Frontends.
  */
 
 function AppleLogo({ className }: { className?: string }) {
@@ -47,7 +60,6 @@ function GpuInfoCard({ health }: { health: HealthResponse }) {
     : null;
   const gpuBackend = hasGpu ? health.gpu_type!.replace(/\s*\(.*\)$/, '') : null;
   const isApple = gpuBackend === 'MPS' || gpuBackend === 'Metal';
-  const showBackendVariant = health.backend_variant && health.backend_variant !== 'cpu';
 
   return (
     <div className="rounded-lg border border-border/60 p-4">
@@ -67,18 +79,10 @@ function GpuInfoCard({ health }: { health: HealthResponse }) {
             {hasGpu ? (
               <>
                 <span>{gpuBackend}</span>
-                {showBackendVariant && (
-                  <>
-                    <span className="text-border">|</span>
-                    <span className="uppercase">{health.backend_variant}</span>
-                  </>
-                )}
                 {health.vram_used_mb != null && health.vram_used_mb > 0 && (
                   <>
                     <span className="text-border">|</span>
-                    <span>
-                      {t('settings.gpu.vramUsed', { mb: health.vram_used_mb.toFixed(0) })}
-                    </span>
+                    <span>{t('settings.gpu.vramUsed', { mb: health.vram_used_mb.toFixed(0) })}</span>
                   </>
                 )}
               </>
@@ -87,31 +91,278 @@ function GpuInfoCard({ health }: { health: HealthResponse }) {
             )}
           </div>
         </div>
-        {hasGpu && (
-          <div className="flex items-center gap-2 rounded-full border border-accent/30 px-2.5 py-0.5">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent/60" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_4px_1px_hsl(var(--accent)/0.4)]" />
-            </span>
-            <span className="text-[10px] font-medium text-muted-foreground">
-              {t('settings.gpu.active')}
-            </span>
-          </div>
-        )}
       </div>
     </div>
+  );
+}
+
+/** Kleine Sektions-Überschrift mit Icon. */
+function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h4 className="flex items-center gap-2 text-sm font-medium">
+        {icon}
+        {title}
+      </h4>
+      <div className="rounded-lg border border-border/60 p-4 space-y-3">{children}</div>
+    </section>
+  );
+}
+
+/** Status-Pill: Farbe nach Zustand. */
+function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'err' | 'idle'; children: React.ReactNode }) {
+  const tones: Record<string, string> = {
+    ok: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
+    warn: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
+    err: 'border-red-500/40 text-red-600 dark:text-red-400',
+    idle: 'border-border/60 text-muted-foreground',
+  };
+  return (
+    <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium', tones[tone])}>
+      {children}
+    </span>
+  );
+}
+
+/** Geordnete Wechselprogress-Leiste: markiert die aktive Phase. */
+function SwitchProgress({ phase, operationKind }: { phase: string; operationKind: string | null }) {
+  const { t } = useTranslation();
+  // Fünf geordnete Schritte (Spec A „Wechselprogress"). Die aktive Position wird
+  // aus der Runtime-Phase abgeleitet — kein erfundener Fortschritt.
+  const steps = [
+    { key: 'admission', label: t('settings.gpu.backend.progress.admission') },
+    { key: 'drain', label: t('settings.gpu.backend.progress.drain') },
+    { key: 'verifyTarget', label: t('settings.gpu.backend.progress.verifyTarget') },
+    { key: 'processTree', label: t('settings.gpu.backend.progress.processTree') },
+    { key: 'vram', label: t('settings.gpu.backend.progress.vram') },
+  ];
+
+  let activeIndex = -1;
+  if (operationKind) {
+    const p = phase.toLowerCase();
+    if (/draining/.test(p)) activeIndex = 1;
+    else if (/preparing|verifying/.test(p)) activeIndex = 2;
+    else if (/stopping/.test(p)) activeIndex = 3;
+    else if (p.includes('ready')) activeIndex = -1; // abgeschlossen
+    else activeIndex = 0; // Admission/Start
+  }
+
+  return (
+    <ol className="space-y-2">
+      {steps.map((s, i) => {
+        const done = operationKind ? i < activeIndex : false;
+        const active = i === activeIndex;
+        return (
+          <li key={s.key} className="flex items-center gap-3 text-xs">
+            <span
+              className={cn(
+                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]',
+                active && 'border-accent bg-accent/10 text-accent',
+                done && 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
+                !active && !done && 'border-border/60 text-muted-foreground/50',
+              )}
+            >
+              {i + 1}
+            </span>
+            <span className={cn(active ? 'text-foreground' : done ? 'text-muted-foreground' : 'text-muted-foreground/50')}>
+              {s.label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
 export function GpuPage() {
   const { t } = useTranslation();
   const { data: health } = useServerHealth();
+  const { snapshot, requestSwitch, installAddon, repairAddon, removeAddon } = useSupervisor();
 
-  if (!health) return null;
+  // Laufende Arbeit (Tasks-API) — separater Bereich wie CapturesTab.
+  const tasksQuery = useQuery({
+    queryKey: ['gpu', 'active-tasks'],
+    queryFn: () => apiClient.getActiveTasks(),
+    refetchInterval: 5000,
+    retry: 0,
+  });
+
+  const generations = tasksQuery.data?.generations ?? [];
+  const downloads = tasksQuery.data?.downloads ?? [];
+  const activeJobs = generations.length;
+  const waitingDownloads = downloads.length;
+
+  // Betriebsmodus-Ableitung aus dem Snapshot.
+  const phase = snapshot?.runtime_phase ?? null;
+  const activeVariant = snapshot?.active_variant ?? null;
+  const admissionOpen = snapshot?.admission_open ?? false;
+  const artifactPhase = snapshot?.artifact_phase ?? 'not_installed';
+  const artifactError = snapshot?.artifact_error ?? null;
+
+  // CUDA-Addon: ist eine Lifecycle-Operation aktiv?
+  const addonBusy = ['downloading', 'verifying', 'staged'].includes(artifactPhase);
+  const canSwitchToCuda = artifactPhase === 'installed' && activeVariant !== 'cuda';
+  const canSwitchToCpu = activeVariant === 'cuda';
 
   return (
     <div className="space-y-8 max-w-2xl">
-      <GpuInfoCard health={health} />
+      {/* Geräteinfo (Health-basiert, unverändert) */}
+      {health && <GpuInfoCard health={health} />}
+
+      {/* 1. Betriebsmodus */}
+      <Section title={t('settings.gpu.backend.mode.title')} icon={<Cpu className="h-4 w-4 text-muted-foreground" />}>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <div>
+            <div className="text-xs text-muted-foreground">{t('settings.gpu.backend.mode.requested')}</div>
+            <div className="font-medium">{activeVariant ?? t('settings.gpu.backend.mode.none')}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">{t('settings.gpu.backend.mode.active')}</div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{activeVariant ?? t('settings.gpu.backend.mode.none')}</span>
+              {admissionOpen && (
+                <Pill tone="ok">
+                  <ShieldCheck className="mr-1 h-3 w-3" />
+                  {t('settings.gpu.backend.mode.admissionOpen')}
+                </Pill>
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">{t('settings.gpu.backend.mode.generation')}</div>
+            <div className="font-mono text-xs">{snapshot?.generation ?? '—'}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">{t('settings.gpu.backend.mode.phase')}</div>
+            <div className="text-xs font-medium">{phase ?? t('settings.gpu.backend.mode.unknown')}</div>
+          </div>
+        </div>
+
+        {/* Switch-Aktionen */}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button size="sm" variant={canSwitchToCuda ? 'default' : 'outline'} disabled={!canSwitchToCuda} onClick={() => void requestSwitch('cuda')}>
+            {t('settings.gpu.backend.switch.toCuda')}
+          </Button>
+          <Button size="sm" variant={canSwitchToCpu ? 'default' : 'outline'} disabled={!canSwitchToCpu} onClick={() => void requestSwitch('cpu')}>
+            {t('settings.gpu.backend.switch.toCpu')}
+          </Button>
+        </div>
+      </Section>
+
+      {/* 2. Laufende Arbeit */}
+      <Section title={t('settings.gpu.backend.work.title')}>
+        {tasksQuery.isError ? (
+          <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.work.unavailable')}</p>
+        ) : tasksQuery.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {t('settings.gpu.backend.work.loading')}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+              <div>
+                <span className="text-muted-foreground">{t('settings.gpu.backend.work.active')}: </span>
+                <span className="font-medium">{activeJobs}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">{t('settings.gpu.backend.work.waiting')}: </span>
+                <span className="font-medium">{waitingDownloads}</span>
+              </div>
+            </div>
+            {activeJobs === 0 && waitingDownloads === 0 ? (
+              <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.work.none')}</p>
+            ) : (
+              <ul className="space-y-1">
+                {generations.map((g) => (
+                  <li key={g.task_id} className="flex items-center gap-2 text-xs">
+                    <Loader2 className="h-3 w-3 animate-spin text-accent" />
+                    <span className="truncate font-mono">{g.profile_id}</span>
+                  </li>
+                ))}
+                {downloads.map((d) => (
+                  <li key={d.model_name} className="flex items-center gap-2 text-xs">
+                    <Loader2 className="h-3 w-3 animate-spin text-accent" />
+                    <span className="truncate">{d.model_name}</span>
+                    {typeof d.progress === 'number' && (
+                      <span className="ml-auto text-muted-foreground/60">{Math.round(d.progress)}%</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </Section>
+
+      {/* 3. CUDA-Addon */}
+      <Section title={t('settings.gpu.backend.addon.title')} icon={<Wrench className="h-4 w-4 text-muted-foreground" />}>
+        <div className="flex items-center justify-between">
+          <Pill tone={artifactPhase === 'installed' ? 'ok' : artifactError ? 'err' : addonBusy ? 'warn' : 'idle'}>
+            {t(`settings.gpu.backend.addon.phase.${artifactPhase}`)}
+          </Pill>
+          {addonBusy && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t('settings.gpu.backend.addon.busy')}
+            </span>
+          )}
+        </div>
+
+        {artifactError && (
+          <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+            {artifactError}
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          {(artifactPhase === 'not_installed' || artifactPhase === 'repair_required') && (
+            <Button size="sm" variant={artifactPhase === 'repair_required' ? 'outline' : 'default'} disabled={addonBusy} onClick={() => void installAddon()}>
+              {t('settings.gpu.backend.addon.install')}
+            </Button>
+          )}
+          {artifactPhase === 'installed' && (
+            <Button size="sm" variant="outline" disabled={addonBusy} onClick={() => void repairAddon()}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" />
+              {t('settings.gpu.backend.addon.checkUpdate')}
+            </Button>
+          )}
+          {artifactPhase === 'repair_required' && (
+            <Button size="sm" disabled={addonBusy} onClick={() => void repairAddon()}>
+              <Wrench className="mr-1 h-3.5 w-3.5" />
+              {t('settings.gpu.backend.addon.repair')}
+            </Button>
+          )}
+          {(artifactPhase === 'installed' || artifactPhase === 'repair_required') && (
+            <Button size="sm" variant="ghost" disabled={addonBusy} onClick={() => void removeAddon()}>
+              <Trash2 className="mr-1 h-3.5 w-3.5" />
+              {t('settings.gpu.backend.addon.remove')}
+            </Button>
+          )}
+        </div>
+      </Section>
+
+      {/* 4. Wechselprogress */}
+      <Section title={t('settings.gpu.backend.progress.title')}>
+        <SwitchProgress phase={phase ?? ''} operationKind={snapshot?.operation_kind ?? null} />
+      </Section>
+
+      {/* 5. Letzte Switch-Evidence (inhaltsfrei) */}
+      <Section title={t('settings.gpu.backend.evidence.title')}>
+        {snapshot && snapshot.operation_id ? (
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+            <dt className="text-muted-foreground">{t('settings.gpu.backend.evidence.operation')}</dt>
+            <dd className="font-mono">{snapshot.operation_kind}</dd>
+            <dt className="text-muted-foreground">{t('settings.gpu.backend.evidence.generation')}</dt>
+            <dd className="font-mono">{snapshot.generation}</dd>
+            <dt className="text-muted-foreground">{t('settings.gpu.backend.evidence.result')}</dt>
+            <dd>{phase}</dd>
+          </dl>
+        ) : (
+          <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.evidence.none')}</p>
+        )}
+      </Section>
+
       <p className="text-xs text-muted-foreground/60 leading-relaxed">{t('settings.gpu.footer')}</p>
     </div>
   );

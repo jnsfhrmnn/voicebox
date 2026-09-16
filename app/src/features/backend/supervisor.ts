@@ -20,6 +20,8 @@ export interface SupervisorSnapshot {
   active_variant: BackendVariant | null;
   admission_open: boolean;
   artifact_phase: 'not_installed' | 'downloading' | 'verifying' | 'staged' | 'installed' | 'repair_required' | 'removing';
+  /** Letzter Addon-Fehlergrund (fail-closed, B9); `null` = kein Fehler aktiv. */
+  artifact_error: string | null;
   operation_id: string | null;
   operation_kind: 'switch_to_cuda' | 'switch_to_cpu' | 'install_addon' | 'repair_addon' | 'remove_addon' | null;
 }
@@ -47,6 +49,23 @@ export function admitJob(requestedGeneration?: number): Promise<AdmissionOutcome
 /** Nutzerinitiiertes Backend-Switch-Request von der GPU-Seite (B9). */
 export function requestBackendSwitch(target: BackendVariant): Promise<void> {
   return invoke('request_backend_switch', { target });
+}
+
+// ── JFW-12 Block (d): CUDA-Addon-Lifecycle, ausschließlich nutzerinitiiert ──
+
+/** Signiertes CUDA-Addon aus dem eingebetteten Releasepfad installieren (B9). */
+export function installCudaAddon(): Promise<void> {
+  return invoke('install_cuda_addon');
+}
+
+/** Defektes Build neu installieren (dieselbe Pipeline wie Install, B9). */
+export function repairCudaAddon(): Promise<void> {
+  return invoke('repair_cuda_addon');
+}
+
+/** Installierte Builds + Current-Pointer entfernen (B9). */
+export function removeCudaAddon(): Promise<void> {
+  return invoke('remove_cuda_addon');
 }
 
 /** Abonniert typisierte Supervisor-Zustandsaenderungen; liefert Unlisten. */

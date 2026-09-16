@@ -1083,7 +1083,63 @@
         "switchCpu": "Failed to switch to CPU",
         "deleteCuda": "Failed to delete CUDA backend"
       },
-      "footer": "Voicebox automatically detects and uses the best available GPU on your system. On Apple Silicon Macs, the MLX backend runs natively on the Neural Engine and GPU via Metal Performance Shaders (MPS), with no additional setup required. On Windows and Linux with NVIDIA GPUs, you can download an optional CUDA backend for hardware-accelerated inference. AMD ROCm, Intel XPU, and DirectML are also supported where available through PyTorch. When no GPU is detected, Voicebox falls back to CPU — all engines still work, just slower."
+      "footer": "Voicebox automatically detects and uses the best available GPU on your system. On Apple Silicon Macs, the MLX backend runs natively on the Neural Engine and GPU via Metal Performance Shaders (MPS), with no additional setup required. On Windows and Linux with NVIDIA GPUs, you can download an optional CUDA backend for hardware-accelerated inference. AMD ROCm, Intel XPU, and DirectML are also supported where available through PyTorch. When no GPU is detected, Voicebox falls back to CPU — all engines still work, just slower.",
+      "backend": {
+        "mode": {
+          "title": "Operating Mode",
+          "requested": "Requested",
+          "active": "Active",
+          "none": "—",
+          "admissionOpen": "Admission open",
+          "generation": "Generation",
+          "phase": "Phase",
+          "unknown": "Unknown"
+        },
+        "switch": {
+          "toCuda": "Switch to CUDA",
+          "toCpu": "Switch to CPU"
+        },
+        "work": {
+          "title": "Running Work",
+          "loading": "Loading…",
+          "unavailable": "Task list is currently unavailable.",
+          "none": "No active or waiting jobs.",
+          "active": "Active",
+          "waiting": "Waiting"
+        },
+        "addon": {
+          "title": "CUDA Addon",
+          "busy": "Working…",
+          "install": "Install",
+          "checkUpdate": "Check for Update",
+          "repair": "Repair",
+          "remove": "Remove",
+          "phase": {
+            "not_installed": "Not installed",
+            "downloading": "Downloading",
+            "verifying": "Verifying",
+            "staged": "Staging",
+            "installed": "Installed",
+            "repair_required": "Repair required",
+            "removing": "Removing"
+          }
+        },
+        "progress": {
+          "title": "Switch Progress",
+          "admission": "Admission check",
+          "drain": "Draining active work",
+          "verifyTarget": "Verifying target backend",
+          "processTree": "Stopping old process tree",
+          "vram": "VRAM evidence (2×)"
+        },
+        "evidence": {
+          "title": "Last Switch Evidence",
+          "operation": "Operation",
+          "generation": "Generation",
+          "result": "Result",
+          "none": "No switch has been performed yet."
+        }
+      }
     },
     "logs": {
       "title": "Server Logs",

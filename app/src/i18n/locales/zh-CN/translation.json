@@ -1083,7 +1083,63 @@
         "switchCpu": "切换到 CPU 失败",
         "deleteCuda": "删除 CUDA 后端失败"
       },
-      "footer": "Voicebox 会自动检测并使用系统上可用的最佳 GPU。在 Apple Silicon Mac 上,MLX 后端通过 Metal Performance Shaders (MPS) 在神经引擎和 GPU 上原生运行,无需额外设置。在配备 NVIDIA GPU 的 Windows 和 Linux 上,您可以下载可选的 CUDA 后端以获得硬件加速推理。AMD ROCm、Intel XPU 和 DirectML 也通过 PyTorch 获得支持。未检测到 GPU 时,Voicebox 会退回到 CPU——所有引擎仍可工作,只是速度较慢。"
+      "footer": "Voicebox 会自动检测并使用系统上可用的最佳 GPU。在 Apple Silicon Mac 上,MLX 后端通过 Metal Performance Shaders (MPS) 在神经引擎和 GPU 上原生运行,无需额外设置。在配备 NVIDIA GPU 的 Windows 和 Linux 上,您可以下载可选的 CUDA 后端以获得硬件加速推理。AMD ROCm、Intel XPU 和 DirectML 也通过 PyTorch 获得支持。未检测到 GPU 时,Voicebox 会退回到 CPU——所有引擎仍可工作,只是速度较慢。",
+      "backend": {
+        "mode": {
+          "title": "运行模式",
+          "requested": "请求",
+          "active": "活动",
+          "none": "—",
+          "admissionOpen": "入门开放",
+          "generation": "代数",
+          "phase": "阶段",
+          "unknown": "未知"
+        },
+        "switch": {
+          "toCuda": "切换到 CUDA",
+          "toCpu": "切换到 CPU"
+        },
+        "work": {
+          "title": "运行中的工作",
+          "loading": "加载中…",
+          "unavailable": "任务列表目前不可用。",
+          "none": "没有活跃或等待的任务。",
+          "active": "活跃",
+          "waiting": "等待"
+        },
+        "addon": {
+          "title": "CUDA 插件",
+          "busy": "工作中…",
+          "install": "安装",
+          "checkUpdate": "检查更新",
+          "repair": "修复",
+          "remove": "移除",
+          "phase": {
+            "not_installed": "未安装",
+            "downloading": "下载中",
+            "verifying": "验证中",
+            "staged": "阶段中",
+            "installed": "已安装",
+            "repair_required": "需要修复",
+            "removing": "移除中"
+          }
+        },
+        "progress": {
+          "title": "切换进度",
+          "admission": "入门检查",
+          "drain": "排空活跃工作",
+          "verifyTarget": "验证目标后端",
+          "processTree": "停止旧进程树",
+          "vram": "VRAM 证据（2次）"
+        },
+        "evidence": {
+          "title": "上次切换证据",
+          "operation": "操作",
+          "generation": "代数",
+          "result": "结果",
+          "none": "尚未进行切换。"
+        }
+      }
     },
     "logs": {
       "title": "服务器日志",

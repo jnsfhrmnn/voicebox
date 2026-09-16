@@ -1083,7 +1083,63 @@
         "switchCpu": "CPU への切り替えに失敗しました",
         "deleteCuda": "CUDA バックエンドの削除に失敗しました"
       },
-      "footer": "Voicebox はシステムで利用可能な最適な GPU を自動で検出し使用します。Apple Silicon Mac では、MLX バックエンドが Metal Performance Shaders(MPS)を介して Neural Engine と GPU 上でネイティブに動作し、追加のセットアップは不要です。NVIDIA GPU 搭載の Windows および Linux では、オプションの CUDA バックエンドをダウンロードしてハードウェアアクセラレーションによる推論が可能です。AMD ROCm、Intel XPU、DirectML も PyTorch を通じて利用可能な環境でサポートされます。GPU が検出されない場合、Voicebox は CPU にフォールバックし、すべてのエンジンはそのまま動作しますが速度は低下します。"
+      "footer": "Voicebox はシステムで利用可能な最適な GPU を自動で検出し使用します。Apple Silicon Mac では、MLX バックエンドが Metal Performance Shaders(MPS)を介して Neural Engine と GPU 上でネイティブに動作し、追加のセットアップは不要です。NVIDIA GPU 搭載の Windows および Linux では、オプションの CUDA バックエンドをダウンロードしてハードウェアアクセラレーションによる推論が可能です。AMD ROCm、Intel XPU、DirectML も PyTorch を通じて利用可能な環境でサポートされます。GPU が検出されない場合、Voicebox は CPU にフォールバックし、すべてのエンジンはそのまま動作しますが速度は低下します。",
+      "backend": {
+        "mode": {
+          "title": "動作モード",
+          "requested": "要求中",
+          "active": "有効",
+          "none": "—",
+          "admissionOpen": "受付オープン",
+          "generation": "世代",
+          "phase": "フェーズ",
+          "unknown": "不明"
+        },
+        "switch": {
+          "toCuda": "CUDA に切り替え",
+          "toCpu": "CPU に切り替え"
+        },
+        "work": {
+          "title": "実行中の作業",
+          "loading": "読み込み中…",
+          "unavailable": "タスクリストは一時的に利用できません。",
+          "none": "アクティブまたは待機中のジョブはありません。",
+          "active": "アクティブ",
+          "waiting": "待機中"
+        },
+        "addon": {
+          "title": "CUDA アドオン",
+          "busy": "処理中…",
+          "install": "インストール",
+          "checkUpdate": "更新を確認",
+          "repair": "修復",
+          "remove": "削除",
+          "phase": {
+            "not_installed": "未インストール",
+            "downloading": "ダウンロード中",
+            "verifying": "検証中",
+            "staged": "ステージング中",
+            "installed": "インストール済み",
+            "repair_required": "修復が必要",
+            "removing": "削除中"
+          }
+        },
+        "progress": {
+          "title": "切り替えの進捗",
+          "admission": "受付チェック",
+          "drain": "アクティブな作業の排空",
+          "verifyTarget": "ターゲットバックエンドの確認",
+          "processTree": "旧プロセスツリーの停止",
+          "vram": "VRAM 証拠（2回）"
+        },
+        "evidence": {
+          "title": "直近の切り替え証拠",
+          "operation": "操作",
+          "generation": "世代",
+          "result": "結果",
+          "none": "まだ切り替えは実行されていません。"
+        }
+      }
     },
     "logs": {
       "title": "サーバーログ",
