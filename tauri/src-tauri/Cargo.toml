@@ -11,6 +11,9 @@ edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
+# JFW-12 B9: Build-ID-Ableitung aus dem Produktprofil (kompaktes kanonisches JSON).
+serde_json = "1"
+sha2 = "0.10"
 
 [dependencies]
 tauri = { version = "2.0", features = ["macos-private-api"] }
@@ -32,6 +35,9 @@ rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 # JFW-12 B8: Executable-Hash fuer die vollstaendige Prozessidentitaet.
 sha2 = "0.10"
+minisign-verify = "0.2.5"
+tar = "0.4"
+flate2 = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "1", features = ["async"] }
@@ -76,3 +82,7 @@ keytap = "0.4"
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+minisign = "0.9"
+tempfile = "3"

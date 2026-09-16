@@ -104,6 +104,23 @@ impl ArtifactPhase {
     }
 }
 
+/// Transition-Regelwerk des Artefakt-Automaten (B2/B9). Der Actor ruft dies vor
+/// jeder Mutation auf; ungültige Sprünge sind hart abgelehnt. Fehlerziele:
+/// `NotInstalled` (nichts war installiert) oder `RepairRequired` (eine
+/// bestätigte Version bleibt nutzbar — AC 104).
+pub fn artifact_transition(from: &ArtifactPhase, to: &ArtifactPhase) -> bool {
+    use ArtifactPhase::*;
+    match from {
+        NotInstalled => matches!(to, Downloading),
+        Downloading => matches!(to, Verifying | NotInstalled),
+        Verifying => matches!(to, Staged | NotInstalled | RepairRequired),
+        Staged => matches!(to, Installed | NotInstalled | RepairRequired),
+        Installed => matches!(to, Removing | RepairRequired | Downloading),
+        RepairRequired => matches!(to, Downloading | Removing),
+        Removing => matches!(to, NotInstalled),
+    }
+}
+
 /// Vollständige Prozessidentität einer Sidecarinstanz (B8): nicht nur PID.
 #[derive(Debug, Clone)]
 pub struct SidecarInstance {
@@ -196,6 +213,8 @@ pub struct BackendSupervisorState {
     pub generation: u64,
     pub runtime: RuntimePhase,
     pub artifact: ArtifactPhase,
+    /// Letzter Addon-Fehlergrund (fail-closed, B9); `None` nach Erfolg/Start.
+    pub artifact_error: Option<String>,
     pub cpu_instance: Option<SidecarInstance>,
     pub cuda_instance: Option<SidecarInstance>,
     /// Nur in einem Ready-Zustand gesetzt; Standby/Drain → `None`.
@@ -211,6 +230,7 @@ impl BackendSupervisorState {
             generation: 0,
             runtime: RuntimePhase::BootingCpu,
             artifact: ArtifactPhase::NotInstalled,
+            artifact_error: None,
             cpu_instance: None,
             cuda_instance: None,
             active_lease: None,
@@ -234,6 +254,7 @@ impl BackendSupervisorState {
             active_variant: self.runtime.active_variant().map(BackendVariant::as_str),
             admission_open: self.runtime.admission_open(),
             artifact_phase: self.artifact.as_str(),
+            artifact_error: self.artifact_error.clone(),
             operation_id: self.operation.as_ref().map(|o| o.operation_id.clone()),
             operation_kind: self.operation.as_ref().map(|o| o.kind.as_str()),
         }
@@ -249,6 +270,8 @@ pub struct SupervisorSnapshot {
     pub active_variant: Option<&'static str>,
     pub admission_open: bool,
     pub artifact_phase: &'static str,
+    /// Letzter Addon-Fehlergrund (fail-closed); `None` = kein Fehler aktiv.
+    pub artifact_error: Option<String>,
     pub operation_id: Option<String>,
     pub operation_kind: Option<&'static str>,
 }
@@ -362,6 +385,29 @@ mod tests {
         let err = operation_conflict(&Some(running), OperationKind::SwitchToCuda).unwrap_err();
         assert!(err.contains("identische Operation"));
         assert!(operation_conflict(&None, OperationKind::SwitchToCpu).is_ok());
+    }
+
+    #[test]
+    fn artifact_lifecycle_transitions() {
+        use ArtifactPhase::*;
+        // Happy Path: NotInstalled → … → Installed.
+        assert!(artifact_transition(&NotInstalled, &Downloading));
+        assert!(artifact_transition(&Downloading, &Verifying));
+        assert!(artifact_transition(&Verifying, &Staged));
+        assert!(artifact_transition(&Staged, &Installed));
+        // Fehlerziele: zurück auf NotInstalled (nichts war installiert) oder
+        // RepairRequired (bestätigte Version bleibt nutzbar).
+        assert!(artifact_transition(&Downloading, &NotInstalled));
+        assert!(artifact_transition(&Verifying, &RepairRequired));
+        assert!(artifact_transition(&Staged, &RepairRequired));
+        // Update: Installed → Downloading (neue Version) oder Removing.
+        assert!(artifact_transition(&Installed, &Downloading));
+        assert!(artifact_transition(&Installed, &Removing));
+        assert!(artifact_transition(&Removing, &NotInstalled));
+        // Ungültige Sprünge sind hart abgelehnt.
+        assert!(!artifact_transition(&NotInstalled, &Installed));
+        assert!(!artifact_transition(&Verifying, &Installed));
+        assert!(!artifact_transition(&Downloading, &Staged));
     }
 
     #[test]

@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 use crate::backend::admission;
+use crate::backend::artifact::Manager;
 use crate::backend::state::*;
 
 /// Event-Name für typisierte Supervisor-Zustände (D: Surface).
@@ -36,6 +37,19 @@ enum Command {
     RequestSwitch(BackendVariant),
     /// App-Ende: Admission schließen; aktive CUDA-Generation invalidieren (B8).
     Shutdown,
+    // ── JFW-12 Block (d): Addon-Lifecycle (ausschließlich nutzerinitiiert) ──
+    /// Nutzerstart: signiertes CUDA-Addon aus dem Releasepfad installieren.
+    InstallAddon,
+    /// Nutzerstart: defektes Build neu installieren (dieselbe Pipeline).
+    RepairAddon,
+    /// Nutzerstart: installierte Builds + Pointer entfernen.
+    RemoveAddon,
+    /// Phasenupdate der Artefakt-Pipeline (aus dem Blocking-Task zurück).
+    ArtifactPhaseUpdate { phase: ArtifactPhase },
+    /// Terminales Ergebnis einer Addon-Operation (Erfolg).
+    ArtifactOperationDone { kind: OperationKind },
+    /// Terminales Ergebnis einer Addon-Operation (Fehler, fail-closed).
+    ArtifactOperationFailed { kind: OperationKind, reason: String },
 }
 
 /// Tauri-State: Mailbox-Handle + geteilter Read-Snapshot. Alle Mutationen laufen
@@ -43,6 +57,8 @@ enum Command {
 pub struct Supervisor {
     tx: tokio::sync::mpsc::Sender<Command>,
     state: Arc<Mutex<BackendSupervisorState>>,
+    /// CUDA-Artefaktmanager (B9): Backend-Root, App-Version, Build-ID.
+    manager: Manager,
 }
 
 impl Clone for Supervisor {
@@ -50,6 +66,11 @@ impl Clone for Supervisor {
         Self {
             tx: self.tx.clone(),
             state: Arc::clone(&self.state),
+            manager: Manager::new(
+                self.manager.base_dir.clone(),
+                self.manager.app_version.clone(),
+                self.manager.build_id.clone(),
+            ),
         }
     }
 }
@@ -67,13 +88,20 @@ pub struct AdmissionOutcome {
 
 impl Supervisor {
     /// Startet den Actor und liefert den State-Handle. Muss vor dem ersten
-    /// Window/Command verfügbar sein (Tauri `setup`).
-    pub fn start(app: AppHandle) -> Self {
+    /// Window/Command verfügbar sein (Tauri `setup`). Der übergebene Manager
+    /// trägt Backend-Root, App-Version und Build-ID des laufenden Builds (B9).
+    pub fn start(app: AppHandle, manager: Manager) -> Self {
         let app_epoch = new_app_epoch();
         let state = Arc::new(Mutex::new(BackendSupervisorState::new(app_epoch.clone())));
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Command>(MAILBOX_CAPACITY);
 
         let actor_state = Arc::clone(&state);
+        // Sender-Klon für die Addon-Blocking-Tasks (tx selbst geht in den Loop).
+        let tx_for_ops = tx.clone();
+        // Manager-Felder vor dem Spawn extrahieren (Self wird am Ende zurückgegeben).
+        let mgr_base_dir = manager.base_dir.clone();
+        let mgr_app_version = manager.app_version.clone();
+        let mgr_build_id = manager.build_id.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
@@ -133,13 +161,12 @@ impl Supervisor {
                     Command::RequestSwitch(target) => {
                         apply(&app, &actor_state, |st| {
                             match target {
-                                // Fail-closed (B2/B9): In Block (b) gibt es keinen
-                                // produktiven CUDA-Pfad — weder installiertes Addon
-                                // noch Operation-Lifecycle. Der Request wird sichtbar
-                                // abgelehnt; Block (d) liefert Artefakt + Switch.
+                                // Fail-closed (B2/B9): Der produktive CUDA-Switch
+                                // folgt mit dem NVML-Evidence-Block; bis dahin wird
+                                // der Request sichtbar abgelehnt.
                                 BackendVariant::Cuda => {
                                     eprintln!(
-                                        "supervisor: SwitchToCuda fail-closed — Artefakt {} (Block d ausstehend)",
+                                        "supervisor: SwitchToCuda fail-closed — Artefakt {} (Switch-Pfad ausstehend)",
                                         st.artifact.as_str()
                                     );
                                 }
@@ -147,7 +174,7 @@ impl Supervisor {
                                 BackendVariant::Cpu => {
                                     if !matches!(st.runtime, RuntimePhase::CpuReady(_)) {
                                         eprintln!(
-                                            "supervisor: SwitchToCpu ignoriert — kein aktiver CUDA-Drain in Block (b) (Zustand {:?})",
+                                            "supervisor: SwitchToCpu ignoriert — kein aktiver CUDA-Drain (Zustand {:?})",
                                             st.runtime
                                         );
                                     }
@@ -167,11 +194,172 @@ impl Supervisor {
                             }
                         });
                     }
+                    // ── Block (d): Addon-Lifecycle, ausschließlich nutzerinitiiert ──
+                    Command::InstallAddon | Command::RepairAddon => {
+                        let kind = match cmd {
+                            Command::InstallAddon => OperationKind::InstallAddon,
+                            _ => OperationKind::RepairAddon,
+                        };
+                        // Konfliktmatrix (B2): genau eine Lifecycle-Operation.
+                        let conflict = {
+                            let st = actor_state.lock().unwrap();
+                            operation_conflict(&st.operation, kind)
+                                .err()
+                                .or_else(|| {
+                                    if !matches!(st.artifact, ArtifactPhase::NotInstalled | ArtifactPhase::RepairRequired | ArtifactPhase::Installed) {
+                                        Some(format!("Artefakt in Phase {} — Operation nicht möglich", st.artifact.as_str()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                        };
+                        if let Some(err) = conflict {
+                            eprintln!("supervisor: Addon-Operation abgelehnt: {err}");
+                            continue;
+                        }
+                        apply(&app, &actor_state, |st| {
+                            st.operation = Some(Operation::new(kind));
+                            st.artifact_error = None;
+                            st.artifact = ArtifactPhase::Downloading;
+                        });
+                        // Blocking-Pipeline im eigenen Task; Phasenupdates laufen
+                        // zurück durch die Mailbox (Actor bleibt seriell).
+                        let manager = Manager::new(
+                            mgr_base_dir.clone(),
+                            mgr_app_version.clone(),
+                            mgr_build_id.clone(),
+                        );
+                        let tx2 = tx_for_ops.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let progress = |phase: &str| {
+                                let p = match phase {
+                                    "downloading" => ArtifactPhase::Downloading,
+                                    "verifying_manifest" | "verifying_signature" => ArtifactPhase::Verifying,
+                                    _ => return, // extracting/committing → Staged folgt unten
+                                };
+                                let _ = tx2.try_send(Command::ArtifactPhaseUpdate { phase: p });
+                            };
+                            let result = if kind == OperationKind::InstallAddon {
+                                manager.install_release(progress)
+                            } else {
+                                manager.repair(progress)
+                            };
+                match result {
+                    Ok(build) => {
+                        let _ = tx2.try_send(Command::ArtifactPhaseUpdate { phase: ArtifactPhase::Staged });
+                        eprintln!("supervisor: Addon-Operation {kind:?} fertig — Build {}", build.build_id);
+                        let _ = tx2.try_send(Command::ArtifactOperationDone { kind });
+                    }
+                    Err(reason) => {
+                        let _ = tx2.try_send(Command::ArtifactOperationFailed { kind, reason });
+                    }
+                }
+            });
+                    }
+                    Command::RemoveAddon => {
+                        let conflict = {
+                            let st = actor_state.lock().unwrap();
+                            operation_conflict(&st.operation, OperationKind::RemoveAddon)
+                                .err()
+                                .or_else(|| {
+                                    if !matches!(st.artifact, ArtifactPhase::NotInstalled | ArtifactPhase::RepairRequired | ArtifactPhase::Installed) {
+                                        Some(format!("Artefakt in Phase {} — Remove nicht möglich", st.artifact.as_str()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                        };
+                        if let Some(err) = conflict {
+                            eprintln!("supervisor: Addon-Remove abgelehnt: {err}");
+                            continue;
+                        }
+                        apply(&app, &actor_state, |st| {
+                            st.operation = Some(Operation::new(OperationKind::RemoveAddon));
+                            st.artifact = ArtifactPhase::Removing;
+                        });
+                        let manager = Manager::new(
+                            mgr_base_dir.clone(),
+                            mgr_app_version.clone(),
+                            mgr_build_id.clone(),
+                        );
+                        let tx2 = tx_for_ops.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            match manager.remove() {
+                                Ok(()) => {
+                                    let _ = tx2.try_send(Command::ArtifactOperationDone { kind: OperationKind::RemoveAddon });
+                                }
+                                Err(reason) => {
+                                    let _ = tx2.try_send(Command::ArtifactOperationFailed { kind: OperationKind::RemoveAddon, reason });
+                                }
+                            }
+                        });
+                    }
+                    Command::ArtifactPhaseUpdate { phase } => {
+                        apply(&app, &actor_state, |st| {
+                            if st.artifact == phase {
+                                return; // gleiche Phase (z. B. zweites "downloading") — No-op
+                            }
+                            if artifact_transition(&st.artifact, &phase) {
+                                st.artifact = phase;
+                            } else {
+                                eprintln!(
+                                    "supervisor: abgelehnte Artefakt-Transition {} -> {}",
+                                    st.artifact.as_str(),
+                                    phase.as_str()
+                                );
+                            }
+                        });
+                    }
+                    Command::ArtifactOperationDone { kind } => {
+                        apply(&app, &actor_state, |st| {
+                            let to = match kind {
+                                OperationKind::RemoveAddon => ArtifactPhase::NotInstalled,
+                                _ => ArtifactPhase::Installed,
+                            };
+                            if artifact_transition(&st.artifact, &to) {
+                                st.artifact = to;
+                            } else {
+                                eprintln!(
+                                    "supervisor: abgelehnte Artefakt-Transition {} -> {} (Operation {kind:?} fertig)",
+                                    st.artifact.as_str(),
+                                    to.as_str()
+                                );
+                            }
+                            st.operation = None;
+                            st.artifact_error = None; // Erfolg: Fehlergrund geklärt
+                        });
+                    }
+                    Command::ArtifactOperationFailed { kind, reason } => {
+                        apply(&app, &actor_state, |st| {
+                            // Fail-closed (B9): die bisher bestätigte Version bleibt
+                            // bis zum grünen Commit erhalten → RepairRequired; ohne
+                            // installierte Version zurück auf NotInstalled.
+                            let has_confirmed = Manager::new(
+                                mgr_base_dir.clone(),
+                                mgr_app_version.clone(),
+                                mgr_build_id.clone(),
+                            )
+                            .current()
+                            .map(|c| c.is_some())
+                            .unwrap_or(false);
+                            let to = if has_confirmed {
+                                ArtifactPhase::RepairRequired
+                            } else {
+                                ArtifactPhase::NotInstalled
+                            };
+                            eprintln!("supervisor: Addon-Operation {kind:?} fehlgeschlagen: {reason}");
+                            st.artifact_error = Some(reason.clone());
+                            if artifact_transition(&st.artifact, &to) {
+                                st.artifact = to;
+                            }
+                            st.operation = None;
+                        });
+                    }
                 }
             }
         });
 
-        Self { tx, state }
+        Self { tx, state, manager }
     }
 
     /// Vor dem CPU-Spawn aufrufen (bestehender Pfad in main.rs).
@@ -198,6 +386,25 @@ impl Supervisor {
     /// Typisierter Switch-Request (GPU-Seite). CUDA ist fail-closed bis Block (d).
     pub fn request_switch(&self, target: BackendVariant) {
         let _ = self.tx.try_send(Command::RequestSwitch(target));
+    }
+
+    // ── JFW-12 Block (d): Addon-Lifecycle, ausschließlich nutzerinitiiert ──
+
+    /// Nutzerstart: signiertes CUDA-Addon aus dem eingebetteten Releasepfad
+    /// installieren (B9). Die Pipeline läuft im Blocking-Task; Phasenupdates
+    /// kommen über die Mailbox zurück.
+    pub fn install_addon(&self) {
+        let _ = self.tx.try_send(Command::InstallAddon);
+    }
+
+    /// Nutzerstart: defektes Build neu installieren (dieselbe Pipeline wie Install).
+    pub fn repair_addon(&self) {
+        let _ = self.tx.try_send(Command::RepairAddon);
+    }
+
+    /// Nutzerstart: installierte Builds + Current-Pointer entfernen.
+    pub fn remove_addon(&self) {
+        let _ = self.tx.try_send(Command::RemoveAddon);
     }
 
     /// App-Ende / Suspend: Admission schließen. Wird in Block (c) an den

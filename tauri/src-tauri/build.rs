@@ -166,5 +166,22 @@ fn main() {
         }
     }
 
+    // JFW-12 B9: exakte App-Build-ID — deterministisch aus dem Produktprofil
+    // (kompakte kanonische JSON-Form, SHA-256, 16 hex). Ändert sich nur, wenn
+    // das Produktprofil sich ändert; Addon-Manifeste müssen sie exakt tragen.
+    {
+        let profile_path = format!("{}/../../product-profiles/jf-whisper.json", project_root);
+        let raw = std::fs::read_to_string(&profile_path)
+            .expect("Produktprofil für Build-ID lesbar (jf-whisper.json)");
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).expect("Produktprofil parsbar (jf-whisper.json)");
+        // serde_json::Map ist ohne preserve_order ein BTreeMap → sortierte Keys.
+        let canonical = serde_json::to_string(&value).expect("kanonisches JSON");
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(canonical.as_bytes());
+        let build_id: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+        println!("cargo:rustc-env=JFW_BUILD_ID={build_id}");
+    }
+
     tauri_build::build()
 }

@@ -801,6 +801,30 @@ fn request_backend_switch(
     Ok(())
 }
 
+// ── JFW-12 Block (d): CUDA-Addon-Lifecycle, ausschließlich nutzerinitiiert ──
+
+/// Nutzerstart: signiertes CUDA-Addon aus dem eingebetteten Releasepfad
+/// installieren (B9). Die UI akzeptiert keine freie URL.
+#[command]
+fn install_cuda_addon(state: State<'_, Supervisor>) -> Result<(), String> {
+    state.install_addon();
+    Ok(())
+}
+
+/// Nutzerstart: defektes Build neu installieren (dieselbe Pipeline wie Install).
+#[command]
+fn repair_cuda_addon(state: State<'_, Supervisor>) -> Result<(), String> {
+    state.repair_addon();
+    Ok(())
+}
+
+/// Nutzerstart: installierte Builds + Current-Pointer entfernen.
+#[command]
+fn remove_cuda_addon(state: State<'_, Supervisor>) -> Result<(), String> {
+    state.remove_addon();
+    Ok(())
+}
+
 #[command]
 async fn restart_server(
     app: tauri::AppHandle,
@@ -1309,7 +1333,20 @@ pub fn run() {
             // JFW-12 B2: Der BackendSupervisor-Actor startet vor jedem Window/Command.
             // Genau ein Tokio-Task besitzt die mutable Backendwahrheit; Commands
             // laufen ueber eine begrenzte MPSC-Mailbox (B2).
-            app.manage(backend::supervisor::Supervisor::start(app.handle().clone()));
+            // JFW-12 B9: Der CUDA-Artefaktmanager trägt Backend-Root, App-Version
+            // und exakte Build-ID des laufenden Builds.
+            let backend_root = std::env::var("LOCALAPPDATA")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| app.path().app_data_dir()
+                    .expect("no LOCALAPPDATA and no app_data_dir"))
+                .join("JFWhisper")
+                .join("backends");
+            let manager = backend::artifact::Manager::new(
+                backend_root,
+                env!("CARGO_PKG_VERSION").to_string(),
+                env!("JFW_BUILD_ID").to_string(),
+            );
+            app.manage(backend::supervisor::Supervisor::start(app.handle().clone(), manager));
 
             #[cfg(desktop)]
             {
@@ -1424,6 +1461,9 @@ pub fn run() {
             supervisor_snapshot,
             supervisor_admit,
             request_backend_switch,
+            install_cuda_addon,
+            repair_cuda_addon,
+            remove_cuda_addon,
             start_system_audio_capture,
             stop_system_audio_capture,
             is_system_audio_supported,
