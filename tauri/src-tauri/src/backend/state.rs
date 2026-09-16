@@ -221,6 +221,10 @@ pub struct BackendSupervisorState {
     pub active_lease: Option<ActiveLease>,
     /// Genau eine Operation darf laufen (Konfliktmatrix, B2).
     pub operation: Option<Operation>,
+    /// Laufender Switch-Evidenz-Sammler (Spec C, AC-F); `None`, wenn kein
+    /// Wechsel läuft. Inhaltsfrei — wird beim Admit eröffnet und terminal
+    /// abgeschlossen (Journal atomar geschrieben).
+    pub evidence: Option<crate::backend::switch_evidence::SwitchEvidence>,
 }
 
 impl BackendSupervisorState {
@@ -235,6 +239,7 @@ impl BackendSupervisorState {
             cuda_instance: None,
             active_lease: None,
             operation: None,
+            evidence: None,
         }
     }
 

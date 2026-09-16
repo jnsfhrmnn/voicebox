@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter};
 use crate::backend::admission;
 use crate::backend::artifact::Manager;
 use crate::backend::state::*;
+use crate::backend::switch_plan::{decide_switch, SwitchDecision};
 
 /// Event-Name für typisierte Supervisor-Zustände (D: Surface).
 pub const SUPERVISOR_EVENT: &str = "backend:supervisor";
@@ -35,6 +36,13 @@ enum Command {
     MarkCpuReady { instance: SidecarInstance },
     /// Nutzerrequest von der GPU-Seite (main-window-initiiert, B9).
     RequestSwitch(BackendVariant),
+    // ── JFW-12 Block (g): Switch-Prozessschritte (aus main.rs zurück) ──
+    /// Drain + Teardown des Ausgangs-Backends bestätigt → Ziel-Vorbereitung.
+    SwitchDrained { op_id: String },
+    /// Ziel-Backend gestartet + Handshake grün → Ready mit neuer Generation.
+    SwitchTargetReady { op_id: String, instance: SidecarInstance },
+    /// Switch fehlgeschlagen → fail-closed NoBackendReady (sichtbar).
+    SwitchFailed { op_id: String, reason: String },
     /// App-Ende: Admission schließen; aktive CUDA-Generation invalidieren (B8).
     Shutdown,
     // ── JFW-12 Block (d): Addon-Lifecycle (ausschließlich nutzerinitiiert) ──
@@ -159,26 +167,155 @@ impl Supervisor {
                         });
                     }
                     Command::RequestSwitch(target) => {
-                        apply(&app, &actor_state, |st| {
-                            match target {
-                                // Fail-closed (B2/B9): Der produktive CUDA-Switch
-                                // folgt mit dem NVML-Evidence-Block; bis dahin wird
-                                // der Request sichtbar abgelehnt.
-                                BackendVariant::Cuda => {
-                                    eprintln!(
-                                        "supervisor: SwitchToCuda fail-closed — Artefakt {} (Switch-Pfad ausstehend)",
-                                        st.artifact.as_str()
-                                    );
-                                }
-                                // CPU ist immer Zielmodus (B3). Bereits auf CPU → no-op.
-                                BackendVariant::Cpu => {
-                                    if !matches!(st.runtime, RuntimePhase::CpuReady(_)) {
-                                        eprintln!(
-                                            "supervisor: SwitchToCpu ignoriert — kein aktiver CUDA-Drain (Zustand {:?})",
-                                            st.runtime
-                                        );
+                        // JFW-12 Block (g): echte Switch-Entscheidung statt Fail-closed-Stub.
+                        // Die reine Entscheidungsfunktion prüft Konflikt → Zielgleichheit →
+                        // Readiness → Artefakt und liefert einen inhaltsfreien Grund bei
+                        // Ablehnung (C). Bei Annahme wird die Operation angelegt und der
+                        // Runtime-Automat in die Drain-Phase überführt; die Prozessschritte
+                        // (Drain-Poll, Teardown, Zielstart, Readiness) laufen im Actor-Task.
+                        let decision = {
+                            let st = actor_state.lock().unwrap();
+                            decide_switch(&st, target)
+                        };
+                        match decision {
+                            SwitchDecision::Reject(reason) => {
+                                eprintln!("supervisor: Switch abgelehnt ({target:?}): {reason}");
+                            }
+                            SwitchDecision::Admit(direction) => {
+                                let kind = match direction {
+                                    crate::backend::switch_evidence::SwitchDirection::CpuToCuda => {
+                                        OperationKind::SwitchToCuda
                                     }
+                                    crate::backend::switch_evidence::SwitchDirection::CudaToCpu => {
+                                        OperationKind::SwitchToCpu
+                                    }
+                                };
+                                apply(&app, &actor_state, |st| {
+                                    let from_gen = st.runtime.active_generation().unwrap_or(0);
+                                    let op = Operation::new(kind);
+                                    // Switch-Evidenz eröffnen (Spec C, AC-F): inhaltsfrei;
+                                    // wird beim terminalen Schritt abgeschlossen + Journal.
+                                    let evidence = crate::backend::switch_evidence::SwitchEvidence::new(
+                                        op.operation_id.clone(),
+                                        direction,
+                                        st.app_epoch.clone(),
+                                        from_gen,
+                                    );
+                                    st.evidence = Some(evidence);
+                                    st.operation = Some(op.clone());
+                                    // Drain-Phase: Admission ist jetzt geschlossen (B2).
+                                    match direction {
+                                        crate::backend::switch_evidence::SwitchDirection::CpuToCuda => {
+                                            if !runtime_transition(&st.runtime, &RuntimePhase::DrainingCpu(op.operation_id.clone())) {
+                                                eprintln!("supervisor: abgelehnte Transition {:?} -> DrainingCpu", st.runtime);
+                                                return;
+                                            }
+                                            st.runtime = RuntimePhase::DrainingCpu(op.operation_id);
+                                        }
+                                        crate::backend::switch_evidence::SwitchDirection::CudaToCpu => {
+                                            if !runtime_transition(&st.runtime, &RuntimePhase::DrainingCuda(op.operation_id.clone())) {
+                                                eprintln!("supervisor: abgelehnte Transition {:?} -> DrainingCuda", st.runtime);
+                                                return;
+                                            }
+                                            st.runtime = RuntimePhase::DrainingCuda(op.operation_id);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    // ── JFW-12 Block (g): Switch-Prozessschritte aus main.rs zurück ──
+                    Command::SwitchDrained { op_id } => {
+                        apply(&app, &actor_state, |st| {
+                            // Richtung ist in der Drain-Phase kodiert (B2).
+                            let to = match &st.runtime {
+                                RuntimePhase::DrainingCpu(o) if *o == op_id => {
+                                    RuntimePhase::PreparingCuda(o.clone())
                                 }
+                                RuntimePhase::DrainingCuda(o) if *o == op_id => {
+                                    RuntimePhase::PreparingCpu(o.clone())
+                                }
+                                _ => return, // Op-Wechsel/fremde Operation — hart abgelehnt.
+                            };
+                            if !runtime_transition(&st.runtime, &to) {
+                                eprintln!("supervisor: abgelehnte Transition {:?} -> {:?}", st.runtime, to);
+                                return;
+                            }
+                            st.runtime = to;
+                        });
+                    }
+                    Command::SwitchTargetReady { op_id, instance } => {
+                        apply(&app, &actor_state, |st| {
+                            // Zielvariante aus der Vorbereitungsphase (B2).
+                            let variant = match &st.runtime {
+                                RuntimePhase::PreparingCuda(o) if *o == op_id => BackendVariant::Cuda,
+                                RuntimePhase::PreparingCpu(o) if *o == op_id => BackendVariant::Cpu,
+                                _ => return,
+                            };
+                            let gen = st.next_generation();
+                            let lease = ActiveLease {
+                                app_epoch: st.app_epoch.clone(),
+                                generation: gen,
+                                backend_variant: variant,
+                                model_contract_hash: model_contract_hash(variant),
+                                sidecar_instance_id: format!("{}-{}", instance.pid, instance.creation_time_ms),
+                            };
+                            let to = match variant {
+                                BackendVariant::Cpu => RuntimePhase::CpuReady(gen),
+                                BackendVariant::Cuda => RuntimePhase::CudaReady(gen),
+                            };
+                            if !runtime_transition(&st.runtime, &to) {
+                                eprintln!("supervisor: abgelehnte Transition {:?} -> {:?}", st.runtime, to);
+                                return;
+                            }
+                            // Nur das aktive Backend hält eine Live-Instanz (C).
+                            match variant {
+                                BackendVariant::Cpu => {
+                                    st.cpu_instance = Some(instance);
+                                    st.cuda_instance = None;
+                                }
+                                BackendVariant::Cuda => {
+                                    st.cuda_instance = Some(instance);
+                                    st.cpu_instance = None;
+                                }
+                            }
+                            st.active_lease = Some(lease);
+                            st.operation = None; // Switch abgeschlossen.
+                            st.runtime = to;
+                            // Evidenz abschließen: Ziel-Generation binden + Journal atomar.
+                            if let Some(mut ev) = st.evidence.take() {
+                                ev.set_to_generation(gen);
+                                let path = ev.finish(
+                                    crate::backend::switch_evidence::SwitchResult::Success,
+                                );
+                                eprintln!("supervisor: Switch-Journal geschrieben ({})", path.display());
+                            }
+                        });
+                    }
+                    Command::SwitchFailed { op_id, reason } => {
+                        apply(&app, &actor_state, |st| {
+                            let is_ours = matches!(
+                                st.runtime,
+                                RuntimePhase::DrainingCpu(ref o)
+                                    | RuntimePhase::DrainingCuda(ref o)
+                                    | RuntimePhase::PreparingCuda(ref o)
+                                    | RuntimePhase::PreparingCpu(ref o)
+                                    if *o == op_id
+                            );
+                            if !is_ours {
+                                eprintln!("supervisor: SwitchFailed für fremde/abgeschlossene Operation ignoriert ({op_id})");
+                                return;
+                            }
+                            // Fail-closed (B2): jeder Fehler → NoBackendReady, sichtbar.
+                            st.runtime = RuntimePhase::NoBackendReady(reason.clone());
+                            st.active_lease = None;
+                            st.operation = None;
+                            // Evidenz abschließen: Journal mit Fehlergrund (inhaltsfrei).
+                            if let Some(ev) = st.evidence.take() {
+                                let path = ev.finish(
+                                    crate::backend::switch_evidence::SwitchResult::Failure(reason),
+                                );
+                                eprintln!("supervisor: Switch-Journal geschrieben ({})", path.display());
                             }
                         });
                     }
@@ -383,9 +520,29 @@ impl Supervisor {
         let _ = self.tx.try_send(Command::MarkCpuReady { instance });
     }
 
-    /// Typisierter Switch-Request (GPU-Seite). CUDA ist fail-closed bis Block (d).
+    /// Typisierter Switch-Request (GPU-Seite). Die Entscheidung läuft im Actor;
+    /// bei Annahme wird die Operation angelegt und der Runtime in die Drain-Phase
+    /// überführt. Prozessschritte werden via `switch_drained` / `switch_target_ready`
+    /// / `switch_failed` zurückgemeldet.
     pub fn request_switch(&self, target: BackendVariant) {
         let _ = self.tx.try_send(Command::RequestSwitch(target));
+    }
+
+    // ── JFW-12 Block (g): Switch-Prozessschritte aus main.rs zurück ──
+
+    /// Drain + Teardown des Ausgangs-Backends bestätigt → Ziel-Vorbereitung.
+    pub fn switch_drained(&self, op_id: String) {
+        let _ = self.tx.try_send(Command::SwitchDrained { op_id });
+    }
+
+    /// Ziel-Backend gestartet + Handshake grün → Ready mit neuer Generation.
+    pub fn switch_target_ready(&self, op_id: String, instance: SidecarInstance) {
+        let _ = self.tx.try_send(Command::SwitchTargetReady { op_id, instance });
+    }
+
+    /// Switch fehlgeschlagen → fail-closed NoBackendReady (sichtbar).
+    pub fn switch_failed(&self, op_id: String, reason: String) {
+        let _ = self.tx.try_send(Command::SwitchFailed { op_id, reason });
     }
 
     // ── JFW-12 Block (d): Addon-Lifecycle, ausschließlich nutzerinitiiert ──
