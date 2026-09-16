@@ -4,6 +4,7 @@
 mod accessibility;
 mod audio_capture;
 mod audio_output;
+mod backend;
 mod clipboard;
 mod focus_capture;
 #[cfg(desktop)]
@@ -19,6 +20,10 @@ use std::sync::Mutex;
 use tauri::{command, State, Manager, WindowEvent, Emitter, Listener, RunEvent, WebviewUrl, WebviewWindowBuilder, PhysicalPosition};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::mpsc;
+
+// JFW-12 B2/B3: BackendSupervisor (serieller Actor) + typisierte Zustände.
+use backend::state::{BackendVariant, SidecarInstance};
+use backend::supervisor::{AdmissionOutcome, Supervisor};
 
 pub const DICTATE_WINDOW_LABEL: &str = "dictate";
 const DICTATE_WINDOW_WIDTH: f64 = 420.0;
@@ -225,6 +230,7 @@ fn resolve_sidecar_path() -> std::path::PathBuf {
 async fn start_server(
     app: tauri::AppHandle,
     state: State<'_, ServerState>,
+    supervisor: State<'_, Supervisor>,
     models_dir: Option<String>,
 ) -> Result<(), String> {
     // Store models_dir for use on restart (empty string means reset to default)
@@ -276,6 +282,9 @@ async fn start_server(
     println!("=================================================================");
     println!("Starting voicebox-server sidecar");
     println!("Data directory: {:?}", data_dir);
+
+    // JFW-12 B2: Supervisor erfährt vom Boot-Versuch (BootingCpu).
+    supervisor.boot_started();
 
     // Check for CUDA backend in data directory (onedir layout: backends/cuda/)
     let cuda_binary = {
@@ -497,6 +506,8 @@ async fn start_server(
                 eprintln!("  - Missing execute permissions");
                 eprintln!("  - Code signing issues on macOS");
                 eprintln!("  - Missing dependencies");
+                // JFW-12 B2: Fehlerphase → NoBackendReady (sichtbar, nicht still).
+                supervisor.boot_failed(format!("spawn_fehler"));
                 return Err(format!("Failed to spawn: {}", e));
             }
         }
@@ -527,6 +538,8 @@ async fn start_server(
             }
 
             // JFW-1: Kein Adoption-Fallback — Timeout bleibt Fehler.
+            // JFW-12 B2: Fehlerphase → NoBackendReady (sichtbar, nicht still).
+            supervisor.boot_failed("boot_timeout".into());
 
             return Err("Server startup timeout - check Console.app for detailed logs".to_string());
         }
@@ -544,6 +557,15 @@ async fn start_server(
                                 *state.sidecar_port.lock().unwrap() = Some(port);
                                 println!("Server is ready! (Handshake: port={}, generation={})",
                                     port, v.get("generation").map(|g| g.to_string()).unwrap_or_default());
+                                // JFW-12 B3/B8: Prozessidentität binden — PID + Erzeugungszeit
+                                // + normalisierter Executable-Pfad; Lease aktiviert Admission.
+                                supervisor.mark_cpu_ready(SidecarInstance::new(
+                                    process_pid,
+                                    resolve_sidecar_path().to_string_lossy().into_owned(),
+                                    BackendVariant::Cpu,
+                                    port,
+                                    String::new(),
+                                ));
                                 break;
                             }
                         }
@@ -648,7 +670,10 @@ async fn start_server(
 }
 
 #[command]
-async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
+async fn stop_server(
+    state: State<'_, ServerState>,
+    supervisor: State<'_, Supervisor>,
+) -> Result<(), String> {
     let pid = state.server_pid.lock().unwrap().take();
     let _child = state.child.lock().unwrap().take();
     
@@ -695,8 +720,49 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
 
             println!("Shutdown request sent (server watchdog will handle cleanup)");
         }
+        
+        // JFW-12 B2: Supervisor kennt den Stopp — Runtime zurück nach
+        // NoBackendReady, Admission geschlossen; dieselbe App-Epoche.
+        supervisor.stopped();
     }
     
+    Ok(())
+}
+
+// ── JFW-12 B2/D: Typisierte Supervisor-Commands (Surface) ────────────────
+// Der Webview spricht den Sidecar nie direkt an; alle Zustandsfragen laufen
+// ueber diese Commands. Events kommen ueber `backend:supervisor`.
+
+/// Aktueller typisierter Snapshot des BackendSupervisors (C: nur RAM).
+#[command]
+fn supervisor_snapshot(state: State<'_, Supervisor>) -> backend::state::SupervisorSnapshot {
+    state.snapshot()
+}
+
+/// Admission-Entscheidung fuer einen neuen Job (B5 Schritt 1): das Frontend
+/// fragt vor produktiven Requests hier an und bekommt die bindende Generation.
+#[command]
+fn supervisor_admit(
+    state: State<'_, Supervisor>,
+    requested_generation: Option<u64>,
+) -> AdmissionOutcome {
+    state.admit(requested_generation)
+}
+
+/// Nutzerinitiiertes Backend-Switch-Request von der GPU-Seite (B9).
+/// `target` ist "cpu" oder "cuda"; CUDA ist fail-closed, bis Block (d) das
+/// signierte Artefakt installiert hat.
+#[command]
+fn request_backend_switch(
+    state: State<'_, Supervisor>,
+    target: String,
+) -> Result<(), String> {
+    let variant = match target.as_str() {
+        "cpu" => BackendVariant::Cpu,
+        "cuda" => BackendVariant::Cuda,
+        other => return Err(format!("unbekannte Variante: {other}")),
+    };
+    state.request_switch(variant);
     Ok(())
 }
 
@@ -704,6 +770,7 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
 async fn restart_server(
     app: tauri::AppHandle,
     state: State<'_, ServerState>,
+    supervisor: State<'_, Supervisor>,
     models_dir: Option<String>,
 ) -> Result<(), String> {
     println!("restart_server: stopping current server...");
@@ -718,7 +785,7 @@ async fn restart_server(
     }
 
     // Stop the current server
-    stop_server(state.clone()).await?;
+    stop_server(state.clone(), supervisor.clone()).await?;
 
     // Wait for port to be released
     println!("restart_server: waiting for port release...");
@@ -726,7 +793,7 @@ async fn restart_server(
 
     // Start server again (will auto-detect CUDA binary and use stored models_dir)
     println!("restart_server: starting server...");
-    start_server(app, state, None).await
+    start_server(app, state, supervisor, None).await
 }
 
 #[command]
@@ -1208,6 +1275,11 @@ pub fn run() {
         .manage(audio_capture::AudioCaptureState::new())
         .manage(audio_output::AudioOutputState::new())
         .setup(|app| {
+            // JFW-12 B2: Der BackendSupervisor-Actor startet vor jedem Window/Command.
+            // Genau ein Tokio-Task besitzt die mutable Backendwahrheit; Commands
+            // laufen ueber eine begrenzte MPSC-Mailbox (B2).
+            app.manage(backend::supervisor::Supervisor::start(app.handle().clone()));
+
             #[cfg(desktop)]
             {
                 // JFW-1: Updater ist aus dem Produktprofil entfernt (updater_enabled=false) —
@@ -1318,6 +1390,9 @@ pub fn run() {
             start_server,
             stop_server,
             restart_server,
+            supervisor_snapshot,
+            supervisor_admit,
+            request_backend_switch,
             set_keep_server_running,
             start_system_audio_capture,
             stop_system_audio_capture,

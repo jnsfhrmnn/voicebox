@@ -28,6 +28,8 @@ cpal = "0.15"
 symphonia = { version = "0.5", features = ["all"] }
 scopeguard = "1.2.0"
 rand = "0.8"
+# JFW-12 B3/B9: app_epoch (UUIDv4) und Artefakt-/Operations-Identitäten.
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "1", features = ["async"] }
