@@ -10,7 +10,7 @@ materialisiert werden (Gate: scripts/verify_schema.py).
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, Boolean, JSON
+from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON
 from sqlalchemy.ext.declarative import declarative_base
 
 from ..utils.capture_chords import (
@@ -68,4 +68,70 @@ class Capture(Base):
     duration_ms = Column(Integer, nullable=True)
     transcript_raw = Column(Text, nullable=False, default="")
     stt_model = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── JFW-12: Task-/Lease-Datenvertrag (Spec B7 + C) ───────────────────────
+# ``tasks`` trägt den Attempt-Zustand (Job/Attempt/Epoche/Generation/Vertrag/
+# Status/Cancel-/Terminalzeit). ``transcript_revisions`` hält das genau-einmal
+# autoritative Rohresultat, gebunden an eine eindeutige ``source_attempt_id``.
+# Beide Tabellen sind JFW-12-reserviert (JFW-1-Schema-Kontrakt erlaubt sie erst
+# ab JFW-12) und bilden die Exactly-once-Basis für Drain/Cancel/Finalisierung.
+
+#: Erlaubte Attempt-Statuswerte (Spec B7: nichtterminal vs. terminal).
+TASK_STATUSES = ("pending", "running", "succeeded", "failed", "cancelled")
+#: Terminaler Status = keine weitere Zustellung/Finalisierung mehr möglich.
+TERMINAL_TASK_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+
+class TaskAttempt(Base):
+    """Ein einzelner, generationen- und epochengebundener Verarbeitungsattempt.
+
+    JFW-12 (Spec B7/C): Jeder Attempt bindet ``job_id``, ``id`` (= attempt_id),
+    ``app_epoch``, ``backend_generation``, den Backend-/Modellvertrag
+    (``model_contract_hash``) und den Eingabehash (``input_hash``). Der Status
+    ist nichtterminal (``pending``/``running``) oder terminal
+    (``succeeded``/``failed``/``cancelled``). Eine terminale Transition wird nur
+    bedingt auf den noch aktiven Attempt gesetzt (Exactly-once, siehe
+    ``services.task_contract.finalize_attempt``).
+    """
+
+    __tablename__ = "tasks"
+
+    id = Column(String, primary_key=True)  # attempt_id (uuid4, vom Supervisor vergeben)
+    job_id = Column(String, nullable=False, index=True)  # logische Job-Identität (mehrere Attempts möglich)
+    app_epoch = Column(String, nullable=False)  # zufällige App-Sitzungsepoche (Rust, RAM)
+    backend_generation = Column(Integer, nullable=False)  # monotoner Generationszähler
+    backend_variant = Column(String, nullable=False)  # cpu | cuda
+    model_contract_hash = Column(String, nullable=False)  # Backend-/Modellvertrag (hashgebunden)
+    input_hash = Column(String, nullable=False)  # Eingabesnapshot-Hash (Audio)
+    status = Column(String, nullable=False, default="pending")  # TASK_STATUSES
+    cancel_requested_at = Column(DateTime, nullable=True)
+    terminal_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class TranscriptRevision(Base):
+    """Das genau-einmal autoritative Rohresultat eines Attempts.
+
+    JFW-12 (Spec B7/C): ``source_attempt_id`` ist eindeutig — ein Attempt kann
+    höchstens eine autoritäre Rohrevision besitzen. Die Revision wird zusammen
+    mit der terminalen Tasktransition in einer DB-Transaktion gespeichert; die
+    eindeutige Referenz verhindert doppelte Rohrevisionen bei konkurrierender
+    Finalisierung/Cancel.
+    """
+
+    __tablename__ = "transcript_revisions"
+
+    id = Column(String, primary_key=True)  # uuid4
+    source_attempt_id = Column(
+        String, nullable=False, unique=True, index=True
+    )  # FK -> tasks.id (eindeutig: genau einmal autoritativ)
+    transcript_raw = Column(Text, nullable=False, default="")
+    stt_model = Column(String, nullable=True)
+    language = Column(String, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

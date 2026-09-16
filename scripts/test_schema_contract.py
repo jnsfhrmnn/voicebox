@@ -30,7 +30,7 @@ def columns_of(engine_, table):
     return {c["name"] for c in insp.get_columns(table)}
 
 
-ALLOWED_TABLES = {"captures", "capture_settings"}
+ALLOWED_TABLES = {"captures", "capture_settings", "tasks", "transcript_revisions"}
 FORBIDDEN_COLS = {
     "auto_refine", "llm_model", "smart_cleanup", "self_correction",
     "preserve_technical", "default_playback_voice_id",
@@ -138,6 +138,6 @@ with new_engine.connect() as conn4:
 print(f"[S4] Alembic-Head: {head}")
 for k, v in meta:
     print(f"     schema_meta[{k}] = {v[:80]}{'...' if len(v) > 80 else ''}")
-assert head == "be53d0afd8cc", f"S4 Head falsch: {head}"
+assert head == "08a06bf47a91", f"S4 Head falsch: {head}"
 
 print("\nALLE S1-S4 GRUEN")

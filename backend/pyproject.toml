@@ -111,3 +111,7 @@ asyncio_mode = "auto"
 build = [
     "pyinstaller>=6.0",
 ]
+# Test-Tools (kein Runtime-Dep): Vertragstests (JFW-12 B7) und Schema-Gates.
+test = [
+    "pytest>=8.0",
+]

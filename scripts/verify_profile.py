@@ -95,7 +95,11 @@ def check_tauri(profile: dict, errors: list[str]) -> None:
         errors.append("UPDATER AKTIV — Profil verbietet den Voicebox-Upstream-Updatekanal")
 
     shell = plugins.get("shell", {})
-    allowlist = set(shell.get("open", []))
+    # JFW-1: Tauri erwartet hier ein Schema-gültiges Feld — die Allowlist ist im
+    # Fork deaktiviert ("open": false). Beide Formen sind erlaubt; nur eine
+    # nicht-leere, vom Profil abweichende Allowlist ist Drift.
+    open_cfg = shell.get("open", [])
+    allowlist = set(open_cfg) if isinstance(open_cfg, list) else set()
     if allowlist != set(caps["shell_open_allowlist"]):
         errors.append(f"Shell-Allowlist {sorted(allowlist)} != Profil {caps['shell_open_allowlist']}")
 

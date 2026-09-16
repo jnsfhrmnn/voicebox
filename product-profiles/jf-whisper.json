@@ -91,7 +91,9 @@
   "database_tables": {
     "active": [
       "captures",
-      "capture_settings"
+      "capture_settings",
+      "tasks",
+      "transcript_revisions"
     ],
     "forbidden": [
       "profiles",

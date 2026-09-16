@@ -115,6 +115,33 @@ def create_empty(db_path: Path) -> int:
                 chord_toggle_to_talk_keys JSON NOT NULL,
                 updated_at TIMESTAMP
             );
+            -- JFW-12 (Spec B7/C): Task-/Lease-Datenvertrag.
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                app_epoch TEXT NOT NULL,
+                backend_generation INTEGER NOT NULL,
+                backend_variant TEXT NOT NULL,
+                model_contract_hash TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                cancel_requested_at TIMESTAMP,
+                terminal_at TIMESTAMP,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_tasks_job_id ON tasks (job_id);
+            CREATE TABLE IF NOT EXISTS transcript_revisions (
+                id TEXT PRIMARY KEY,
+                source_attempt_id TEXT NOT NULL,
+                transcript_raw TEXT NOT NULL DEFAULT '',
+                stt_model TEXT,
+                language TEXT,
+                duration_ms INTEGER,
+                created_at TIMESTAMP
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_transcript_revisions_source_attempt_id
+                ON transcript_revisions (source_attempt_id);
             """
         )
         con.commit()
