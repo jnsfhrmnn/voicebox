@@ -765,15 +765,6 @@
         "updatedTitle": "サーバー URL を更新しました",
         "updatedDescription": "{{url}} に接続しました"
       },
-      "keepServerRunning": {
-        "title": "アプリ終了後もサーバーを起動したままにする",
-        "description": "アプリを閉じた後もサーバーがバックグラウンドで動作し続けます。",
-        "failedTitle": "設定の更新に失敗しました",
-        "failedDescription": "バックエンドに設定を同期できませんでした。",
-        "updatedTitle": "設定を更新しました",
-        "runningDescription": "アプリ終了後もサーバーは動作し続けます",
-        "stoppedDescription": "アプリ終了時にサーバーは停止します"
-      },
       "networkAccess": {
         "title": "ネットワークアクセスを許可",
         "description": "ネットワーク上の他のデバイスからサーバーにアクセスできるようにします。変更後はアプリを再起動してください。",

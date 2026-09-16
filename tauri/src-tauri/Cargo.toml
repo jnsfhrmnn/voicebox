@@ -30,6 +30,8 @@ scopeguard = "1.2.0"
 rand = "0.8"
 # JFW-12 B3/B9: app_epoch (UUIDv4) und Artefakt-/Operations-Identitäten.
 uuid = { version = "1", features = ["v4"] }
+# JFW-12 B8: Executable-Hash fuer die vollstaendige Prozessidentitaet.
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "1", features = ["async"] }
@@ -48,6 +50,12 @@ windows = { version = "0.62", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Threading",
+    # JFW-12 B8: Job Objects (KILL_ON_JOB_CLOSE) + Pipes fuer den Sidecar-Spawner.
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

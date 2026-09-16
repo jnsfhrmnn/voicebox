@@ -123,9 +123,14 @@ pub fn show_dictate_window(app: &tauri::AppHandle) {
 
 pub(crate) const SERVER_PORT: u16 = 17493;
 struct ServerState {
+    /// JFW-12 B8 (Windows): Das Job Object des Sidecar-Prozessbaums. Drop/Close
+    /// beendet den kompletten Baum (KILL_ON_JOB_CLOSE). Auf Nicht-Windows bleibt
+    /// der Tauri-Shell-Child als Fallback-Pfad erhalten.
+    #[cfg(windows)]
+    sidecar_job: Mutex<Option<backend::process_windows::SidecarJob>>,
+    #[cfg(not(windows))]
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     server_pid: Mutex<Option<u32>>,
-    keep_running_on_close: Mutex<bool>,
     models_dir: Mutex<Option<String>>,
     /// JFW-1: pro Start erzeugtes Bearer-Token. Bleibt im Rust-RAM, wird nie an
     /// Webviews oder Logs ausgegeben; der Sidecar bekommt es nur per Umgebung.
@@ -242,10 +247,19 @@ async fn start_server(
         }
     }
     // Check if server is already running (managed by this app instance)
-    if state.child.lock().unwrap().is_some() {
-        // JFW-1: Der Port bleibt im Rust-State; die Webview bekommt nur den
-        // Start-Bestatigungs-Marker, nie eine URL.
-        return Ok(());
+    #[cfg(windows)]
+    {
+        if state.sidecar_job.lock().unwrap().is_some() {
+            return Ok(());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if state.child.lock().unwrap().is_some() {
+            // JFW-1: Der Port bleibt im Rust-State; die Webview bekommt nur den
+            // Start-Bestatigungs-Marker, nie eine URL.
+            return Ok(());
+        }
     }
 
     // JFW-1: kein Wiederverwenden fremder Server mehr. Der Sidecar bindet einen
@@ -338,34 +352,10 @@ async fn start_server(
         }
     };
 
-    let sidecar_result = app.shell().sidecar("jf-whisper-server");
-
-    let mut sidecar = match sidecar_result {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to get sidecar: {}", e);
-
-            // In dev mode, check if the server is already running (started manually)
-            #[cfg(debug_assertions)]
-            {
-                // JFW-1: Fremdprozess-Adoption entfernt — ein manuell gestarteter
-                // Server wird nicht uebernommen (Spec: kein Health-Payload-Reuse).
-
-                eprintln!("");
-                eprintln!("=================================================================");
-                eprintln!("DEV MODE: No server found on port {}", SERVER_PORT);
-                eprintln!("");
-                eprintln!("Start the Python server in a separate terminal:");
-                eprintln!("  bun run dev:server");
-                eprintln!("=================================================================");
-                eprintln!("");
-            }
-
-            return Err(format!("Failed to start server. In dev mode, run 'bun run dev:server' in a separate terminal."));
-        }
-    };
-
-    println!("Sidecar command created successfully");
+    // JFW-12 B8: Sidecar wird per CreateProcessW + Job Object erzeugt.
+    // Der Tauri-Shell-Spawn ist ersetzt; die Binary-Auflösung bleibt identisch
+    // (resolve_sidecar_path / CUDA-Detection).
+    let sidecar_exe = resolve_sidecar_path();
 
     // JFW-1: pro Start zufaelliges Bearer-Token + Generation. Token bleibt im
     // Rust-RAM (state.api_token) und wird nur per Umgebung an den Sidecar
@@ -453,61 +443,79 @@ async fn start_server(
         println!("Custom models directory: {}", dir);
     }
 
-    // If CUDA binary exists, launch it from the onedir directory.
-    // .current_dir() is critical: PyInstaller onedir expects all DLLs and
-    // support files (nvidia/, _internal/, etc.) relative to the exe.
-    let spawn_result = if let Some(ref cuda_path) = cuda_binary {
-        let cuda_dir = cuda_path.parent().unwrap();
-        println!("Launching CUDA backend: {:?} (cwd: {:?})", cuda_path, cuda_dir);
-        let mut cmd = app.shell().command(cuda_path.to_str().unwrap());
-        cmd = cmd.current_dir(cuda_dir);
-        cmd = cmd.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
+    // JFW-12 B8: Der Sidecar wird per CreateProcessW + Job Object erzeugt —
+    // suspendiert, dem Job (KILL_ON_JOB_CLOSE) zugeordnet und erst dann
+    // resumed. Die Zeilen werden auf CommandEvent gemappt, damit der
+    // bestehende Handshake-Loop unverändert bleibt.
+    #[cfg(windows)]
+    let (mut rx, sidecar_job) = {
+        use backend::process_windows::{spawn_sidecar, SidecarLine};
+        use tauri_plugin_shell::process::CommandEvent;
+
+        let exe_path = cuda_binary.clone().unwrap_or_else(|| sidecar_exe.clone());
+        // PyInstaller onedir erwartet DLLs relativ zum Exe → cwd = Exe-Verzeichnis.
+        let cwd: Option<std::path::PathBuf> =
+            cuda_binary.as_ref().and_then(|c| c.parent()).map(std::path::PathBuf::from);
+
+        let args: Vec<String> = vec![
+            "--data-dir".to_string(),
+            data_dir_str,
+            "--port".to_string(),
+            port_str,
+            "--parent-pid".to_string(),
+            parent_pid_str,
+        ];
+        let mut extra_env: Vec<(String, String)> = vec![
+            ("JFWHISPER_API_TOKEN".to_string(), api_token.clone()),
+            ("JFWHISPER_GENERATION".to_string(), generation.to_string()),
+        ];
         if let Some(ref dir) = effective_models_dir {
-            cmd = cmd.env("VOICEBOX_MODELS_DIR", dir);
+            extra_env.push(("VOICEBOX_MODELS_DIR".to_string(), dir.clone()));
         }
-        cmd = cmd.env("JFWHISPER_API_TOKEN", &api_token).env("JFWHISPER_GENERATION", generation.to_string());
-        cmd.spawn()
-    } else {
-        // Use the bundled CPU sidecar
+
+        match spawn_sidecar(&exe_path, &args, &extra_env, cwd.as_deref()) {
+            Ok((proc, mut line_rx)) => {
+                // Bridge: SidecarLine → CommandEvent (bestehender Loop bleibt identisch).
+                let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<CommandEvent>();
+                tokio::spawn(async move {
+                    while let Some(line) = line_rx.recv().await {
+                        let ev = match line {
+                            SidecarLine::Stdout(s) => CommandEvent::Stdout(s.into_bytes()),
+                            SidecarLine::Stderr(s) => CommandEvent::Stderr(s.into_bytes()),
+                        };
+                        if cmd_tx.send(ev).is_err() {
+                            break; // Receiver weg — Loop beendet.
+                        }
+                    }
+                });
+                (cmd_rx, proc)
+            }
+            Err(e) => {
+                eprintln!("Failed to spawn server process: {}", e);
+                supervisor.boot_failed("spawn_fehler".to_string());
+                return Err(format!("Failed to spawn: {}", e));
+            }
+        }
+    };
+
+    #[cfg(not(windows))]
+    let (mut rx, child) = {
+        // Nicht-Windows-Fallback: Tauri-Shell-Spawn (Produktziel ist Windows;
+        // B8-Job-Objects gelten fuer den produktiven Pfad).
+        let mut sidecar = app.shell().sidecar("jf-whisper-server").map_err(|e| {
+            format!("Failed to get sidecar: {}", e)
+        })?;
         sidecar = sidecar.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
         if let Some(ref dir) = effective_models_dir {
             sidecar = sidecar.env("VOICEBOX_MODELS_DIR", dir);
         }
         sidecar = sidecar.env("JFWHISPER_API_TOKEN", &api_token).env("JFWHISPER_GENERATION", generation.to_string());
-        println!("Spawning server process...");
-        sidecar.spawn()
-    };
-
-    let (mut rx, child) = match spawn_result {
-        Ok(result) => result,
-        Err(e) => {
-            eprintln!("Failed to spawn server process: {}", e);
-
-            // In dev mode, check if a manually-started server is available
-            #[cfg(debug_assertions)]
-            {
-                // JFW-1: Fremdprozess-Adoption entfernt (Spec).
-
-                eprintln!("");
-                eprintln!("=================================================================");
-                eprintln!("DEV MODE: Server binary failed to start");
-                eprintln!("");
-                eprintln!("Start the Python server in a separate terminal:");
-                eprintln!("  bun run dev:server");
-                eprintln!("=================================================================");
-                eprintln!("");
-                return Err("Dev mode: Start server manually with 'bun run dev:server'".to_string());
-            }
-
-            #[cfg(not(debug_assertions))]
-            {
-                eprintln!("This could be due to:");
-                eprintln!("  - Missing or corrupted binary");
-                eprintln!("  - Missing execute permissions");
-                eprintln!("  - Code signing issues on macOS");
-                eprintln!("  - Missing dependencies");
-                // JFW-12 B2: Fehlerphase → NoBackendReady (sichtbar, nicht still).
-                supervisor.boot_failed(format!("spawn_fehler"));
+        let spawn_result = sidecar.spawn();
+        match spawn_result {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("Failed to spawn server process: {}", e);
+                supervisor.boot_failed("spawn_fehler".to_string());
                 return Err(format!("Failed to spawn: {}", e));
             }
         }
@@ -517,9 +525,19 @@ async fn start_server(
     println!("=================================================================");
 
     // Store child process and PID
+    #[cfg(windows)]
+    let process_pid = sidecar_job.identity.pid;
+    #[cfg(not(windows))]
     let process_pid = child.pid();
     *state.server_pid.lock().unwrap() = Some(process_pid);
-    *state.child.lock().unwrap() = Some(child);
+    #[cfg(windows)]
+    {
+        *state.sidecar_job.lock().unwrap() = Some(sidecar_job);
+    }
+    #[cfg(not(windows))]
+    {
+        *state.child.lock().unwrap() = Some(child);
+    }
 
     // Wait for server to be ready by listening for startup log
     // PyInstaller bundles can be slow on first import, especially torch/transformers
@@ -675,11 +693,21 @@ async fn stop_server(
     supervisor: State<'_, Supervisor>,
 ) -> Result<(), String> {
     let pid = state.server_pid.lock().unwrap().take();
-    let _child = state.child.lock().unwrap().take();
-    
+
+    // JFW-12 B8 (Windows): Das Job Object wird hier entnommen. Sein Drop am Ende
+    // dieser Funktion schließt das Job → KILL_ON_JOB_CLOSE beendet den kompletten
+    // Sidecar-Prozessbaum, auch wenn der HTTP-Shutdown nicht ankam.
+    #[cfg(windows)]
+    let job = state.sidecar_job.lock().unwrap().take();
+
+    #[cfg(not(windows))]
+    {
+        let _child = state.child.lock().unwrap().take();
+    }
+
     if let Some(pid) = pid {
         println!("stop_server: Stopping server with PID: {}", pid);
-        
+
         #[cfg(unix)]
         {
             use std::process::Command;
@@ -687,24 +715,24 @@ async fn stop_server(
             let _ = Command::new("kill")
                 .args(["-TERM", "--", &format!("-{}", pid)])
                 .output();
-            
+
             // Brief wait then force kill
             std::thread::sleep(std::time::Duration::from_millis(100));
-            
+
             let _ = Command::new("kill")
                 .args(["-9", "--", &format!("-{}", pid)])
                 .output();
             let _ = Command::new("kill")
                 .args(["-9", &pid.to_string()])
                 .output();
-            
+
             println!("stop_server: Process group kill completed");
         }
-        
+
         #[cfg(windows)]
         {
-            // Send graceful shutdown via HTTP — the server's parent-pid watchdog
-            // will also handle cleanup if this app process exits.
+            // Zuerst graceful Shutdown per HTTP (Server kann sich sauber verabschieden),
+            // danach garantiert das Job-Close unten den Baum-Kill.
             println!("Sending graceful shutdown via HTTP...");
             let client = reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(2))
@@ -717,15 +745,22 @@ async fn stop_server(
                     .post(&format!("http://127.0.0.1:{}/shutdown", port))
                     .send();
             }
-
-            println!("Shutdown request sent (server watchdog will handle cleanup)");
         }
-        
+
         // JFW-12 B2: Supervisor kennt den Stopp — Runtime zurück nach
         // NoBackendReady, Admission geschlossen; dieselbe App-Epoche.
         supervisor.stopped();
     }
-    
+
+    // JFW-12 B8 (Windows): Job-Close am Ende der Funktion → kompletter
+    // Prozessbaum wird beendet (KILL_ON_JOB_CLOSE). `job` wird hier gedroppt.
+    #[cfg(windows)]
+    {
+        if job.is_some() {
+            println!("stop_server: Closing sidecar job object (process tree kill)");
+        }
+    }
+
     Ok(())
 }
 
@@ -794,12 +829,6 @@ async fn restart_server(
     // Start server again (will auto-detect CUDA binary and use stored models_dir)
     println!("restart_server: starting server...");
     start_server(app, state, supervisor, None).await
-}
-
-#[command]
-fn set_keep_server_running(state: State<'_, ServerState>, keep_running: bool) {
-    println!("set_keep_server_running called with: {}", keep_running);
-    *state.keep_running_on_close.lock().unwrap() = keep_running;
 }
 
 #[command]
@@ -1264,9 +1293,11 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .manage(ServerState {
+            #[cfg(windows)]
+            sidecar_job: Mutex::new(None),
+            #[cfg(not(windows))]
             child: Mutex::new(None),
             server_pid: Mutex::new(None),
-            keep_running_on_close: Mutex::new(false),
             models_dir: Mutex::new(None),
             api_token: Mutex::new(None),
             generation: Mutex::new(0),
@@ -1393,7 +1424,6 @@ pub fn run() {
             supervisor_snapshot,
             supervisor_admit,
             request_backend_switch,
-            set_keep_server_running,
             start_system_audio_capture,
             stop_system_audio_capture,
             is_system_audio_supported,
@@ -1470,66 +1500,23 @@ pub fn run() {
             match &event {
                 RunEvent::Exit => {
                     let state = app.state::<ServerState>();
-                    let keep_running = *state.keep_running_on_close.lock().unwrap();
                     let has_pid = state.server_pid.lock().unwrap().is_some();
-                    println!("RunEvent::Exit — keep_running={}, has_pid={}", keep_running, has_pid);
+                    println!("RunEvent::Exit — has_pid={}", has_pid);
 
-                    if keep_running {
-                        // Tell the server to disable its watchdog so it survives
-                        // after this process exits.
-                        println!("Keep server running: disabling watchdog...");
+                    // JFW-12 B8 (Windows): Das Job Object wird hier entnommen;
+                    // sein Drop am Ende des Arms schließt das Job und beendet
+                    // den kompletten Sidecar-Prozessbaum (KILL_ON_JOB_CLOSE).
+                    #[cfg(windows)]
+                    let job = state.sidecar_job.lock().unwrap().take();
 
-                        // Write a sentinel file as a reliable fallback. On Windows
-                        // the HTTP request below can race with process exit, leaving
-                        // the watchdog unaware it should stay alive. The sentinel
-                        // file is checked during the watchdog grace period.
-                        let data_dir = app
-                            .path()
-                            .app_data_dir()
-                            .unwrap_or_default();
-                        let sentinel = data_dir.join(".keep-running");
-                        if let Err(e) = std::fs::write(&sentinel, b"1") {
-                            eprintln!("Failed to write keep-running sentinel: {}", e);
-                        } else {
-                            println!("Wrote keep-running sentinel to {:?}", sentinel);
-                        }
+                    if has_pid {
+                        println!("RunEvent::Exit - closing sidecar process tree");
+                    }
 
-                        let client = reqwest::blocking::Client::builder()
-                            .timeout(std::time::Duration::from_secs(2))
-                            .build()
-                            .unwrap();
-                        let wd_port = *state.sidecar_port.lock().unwrap();
-                        if let Some(wd_port) = wd_port {
-                        match client
-                            .post(&format!("http://127.0.0.1:{}/watchdog/disable", wd_port))
-                            .send()
-                        {
-                            Ok(resp) => println!("Watchdog disable response: {}", resp.status()),
-                            Err(e) => eprintln!("Failed to disable watchdog: {}", e),
-                        }
-                        }
-                    } else {
-                        // Server will self-terminate via parent-pid watchdog when
-                        // this process exits. On Unix, also send SIGTERM for
-                        // immediate cleanup.
-                        println!("RunEvent::Exit - server will self-terminate via watchdog");
-
-                        #[cfg(unix)]
-                        {
-                            if let Some(pid) = state.server_pid.lock().unwrap().take() {
-                                use std::process::Command;
-                                let _ = Command::new("kill")
-                                    .args(["-TERM", "--", &format!("-{}", pid)])
-                                    .output();
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                let _ = Command::new("kill")
-                                    .args(["-9", "--", &format!("-{}", pid)])
-                                    .output();
-                                let _ = Command::new("kill")
-                                    .args(["-9", &pid.to_string()])
-                                    .output();
-                            }
-                        }
+                    // JFW-12 B8: Job-Close am Ende des Arms → `job` wird gedroppt.
+                    #[cfg(windows)]
+                    {
+                        let _ = job;
                     }
                 }
                 RunEvent::ExitRequested { api, .. } => {

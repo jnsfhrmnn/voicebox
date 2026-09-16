@@ -765,15 +765,6 @@
         "updatedTitle": "Server URL updated",
         "updatedDescription": "Connected to {{url}}"
       },
-      "keepServerRunning": {
-        "title": "Keep server running when app closes",
-        "description": "The server will continue running in the background after closing the app.",
-        "failedTitle": "Failed to update setting",
-        "failedDescription": "Could not sync setting to backend.",
-        "updatedTitle": "Setting updated",
-        "runningDescription": "Server will continue running when app closes",
-        "stoppedDescription": "Server will stop when app closes"
-      },
       "networkAccess": {
         "title": "Allow network access",
         "description": "Makes the server accessible from other devices on your network. Restart the app after changing.",

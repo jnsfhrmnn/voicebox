@@ -765,15 +765,6 @@
         "updatedTitle": "服务器 URL 已更新",
         "updatedDescription": "已连接到 {{url}}"
       },
-      "keepServerRunning": {
-        "title": "关闭应用时保持服务器运行",
-        "description": "关闭应用后,服务器将继续在后台运行。",
-        "failedTitle": "更新设置失败",
-        "failedDescription": "无法将设置同步到后端。",
-        "updatedTitle": "设置已更新",
-        "runningDescription": "关闭应用时服务器将继续运行",
-        "stoppedDescription": "关闭应用时服务器将停止"
-      },
       "networkAccess": {
         "title": "允许网络访问",
         "description": "使网络上的其他设备可以访问服务器。更改后请重启应用。",

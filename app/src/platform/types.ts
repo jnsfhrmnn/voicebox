@@ -59,7 +59,6 @@ export interface PlatformLifecycle {
   startServer(modelsDir?: string | null): Promise<void>;
   stopServer(): Promise<void>;
   restartServer(modelsDir?: string | null): Promise<void>;
-  setKeepServerRunning(keep: boolean): Promise<void>;
   setupWindowCloseHandler(): Promise<void>;
   subscribeToServerLogs(callback: (entry: ServerLogEntry) => void): () => void;
   onServerReady?: () => void;

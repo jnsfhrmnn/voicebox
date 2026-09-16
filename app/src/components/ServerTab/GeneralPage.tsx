@@ -3,12 +3,9 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Toggle } from '@/components/ui/toggle';
-import { useToast } from '@/components/ui/use-toast';
 import { useAutoUpdater } from '@/hooks/useAutoUpdater';
 import { useServerHealth } from '@/lib/hooks/useServer';
 import { usePlatform } from '@/platform/PlatformContext';
-import { useServerStore } from '@/stores/serverStore';
 import { LanguageSelect } from './LanguageSelect';
 import { SettingRow, SettingSection } from './SettingRow';
 import { ThemeSelect } from './ThemeSelect';
@@ -16,9 +13,6 @@ import { ThemeSelect } from './ThemeSelect';
 export function GeneralPage() {
   const { t } = useTranslation();
   const platform = usePlatform();
-  const keepServerRunningOnClose = useServerStore((state) => state.keepServerRunningOnClose);
-  const setKeepServerRunningOnClose = useServerStore((state) => state.setKeepServerRunningOnClose);
-  const { toast } = useToast();
   const { data: health, isLoading, error: healthError } = useServerHealth();
 
   return (
@@ -72,38 +66,6 @@ export function GeneralPage() {
             <ConnectionStatus health={health} isLoading={isLoading} healthError={healthError} />
           }
         />
-
-        <SettingRow
-          title={t('settings.general.keepServerRunning.title')}
-          description={t('settings.general.keepServerRunning.description')}
-          htmlFor="keepServerRunning"
-          action={
-            <Toggle
-              id="keepServerRunning"
-              checked={keepServerRunningOnClose}
-              onCheckedChange={(checked: boolean) => {
-                setKeepServerRunningOnClose(checked);
-                platform.lifecycle.setKeepServerRunning(checked).catch((error) => {
-                  console.error('Failed to sync setting to Rust:', error);
-                  setKeepServerRunningOnClose(!checked);
-                  toast({
-                    title: t('settings.general.keepServerRunning.failedTitle'),
-                    description: t('settings.general.keepServerRunning.failedDescription'),
-                    variant: 'destructive',
-                  });
-                  return;
-                });
-                toast({
-                  title: t('settings.general.keepServerRunning.updatedTitle'),
-                  description: checked
-                    ? t('settings.general.keepServerRunning.runningDescription')
-                    : t('settings.general.keepServerRunning.stoppedDescription'),
-                });
-              }}
-            />
-          }
-        />
-
 
         <SettingRow
           title={t('settings.language.label')}

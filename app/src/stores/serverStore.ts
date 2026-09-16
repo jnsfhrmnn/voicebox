@@ -9,9 +9,6 @@ interface ServerStore {
   isConnected: boolean;
   setIsConnected: (connected: boolean) => void;
 
-  keepServerRunningOnClose: boolean;
-  setKeepServerRunningOnClose: (keepRunning: boolean) => void;
-
   customModelsDir: string | null;
   setCustomModelsDir: (dir: string | null) => void;
 }
@@ -72,9 +69,6 @@ export const useServerStore = create<ServerStore>()(
 
       isConnected: false,
       setIsConnected: (connected) => set({ isConnected: connected }),
-
-      keepServerRunningOnClose: false,
-      setKeepServerRunningOnClose: (keepRunning) => set({ keepServerRunningOnClose: keepRunning }),
 
       customModelsDir: null,
       setCustomModelsDir: (dir) => set({ customModelsDir: dir }),

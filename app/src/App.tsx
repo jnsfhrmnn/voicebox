@@ -60,18 +60,6 @@ function MainApp() {
   // capture_settings resolves or the user edits the chord.
   useChordSync();
 
-  // Sync stored setting to Rust on startup
-  useEffect(() => {
-    if (platform.metadata.isTauri) {
-      const keepRunning = useServerStore.getState().keepServerRunningOnClose;
-      platform.lifecycle.setKeepServerRunning(keepRunning).catch((error) => {
-        console.error('Failed to sync initial setting to Rust:', error);
-      });
-    }
-    // Empty dependency array - platform is stable from context, only run once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform.metadata.isTauri, platform.lifecycle]);
-
   // Setup lifecycle callbacks
   useEffect(() => {
     platform.lifecycle.onServerReady = () => {

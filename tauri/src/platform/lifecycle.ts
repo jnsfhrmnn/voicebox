@@ -43,34 +43,20 @@ class TauriLifecycle implements PlatformLifecycle {
     }
   }
 
-  async setKeepServerRunning(keepRunning: boolean): Promise<void> {
-    try {
-      await invoke('set_keep_server_running', { keepRunning });
-    } catch (error) {
-      console.error('Failed to set keep server running setting:', error);
-    }
-  }
-
   async setupWindowCloseHandler(): Promise<void> {
     try {
-      // Listen for window close request from Rust
+      // Listen for window close request from Rust. JFW-12 B8: Der Sidecar-Prozessbaum
+      // wird beim App-Ende ueber das Job Object beendet (KILL_ON_JOB_CLOSE) — die
+      // keep_running_on_close-Option existiert nicht mehr. Wir geben den Close nur
+      // noch frei; der graceful HTTP-Stopp bleibt als sauberes Verabschieden.
       await listen<null>('window-close-requested', async () => {
-        // Import store here to avoid circular dependency
-        const { useServerStore } = await import('@/stores/serverStore');
-        const keepRunning = useServerStore.getState().keepServerRunningOnClose;
-
-        // Check if server was started by this app instance
         // @ts-expect-error - accessing module-level variable from another module
         const serverStartedByApp = window.__voiceboxServerStartedByApp ?? false;
 
-        console.log(
-          '[lifecycle] window-close-requested: keepRunning=%s, serverStartedByApp=%s',
-          keepRunning,
-          serverStartedByApp,
-        );
+        console.log('[lifecycle] window-close-requested: serverStartedByApp=%s', serverStartedByApp);
 
-        if (!keepRunning && serverStartedByApp) {
-          // Stop server before closing (only if we started it)
+        if (serverStartedByApp) {
+          // Graceful HTTP-Shutdown vor dem Close (Job-Close ist die Garantie).
           try {
             await this.stopServer();
           } catch (error) {
