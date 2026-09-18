@@ -300,7 +300,10 @@ async fn start_server(
     // JFW-12 B2: Supervisor erfährt vom Boot-Versuch (BootingCpu).
     supervisor.boot_started();
 
-    // Check for CUDA backend in data directory (onedir layout: backends/cuda/)
+    // Check for CUDA backend in data directory (onedir layout: backends/cuda/).
+    // JFW-12 Block (d)/(g): Installierte Builds liegen versioniert unter
+    // `backends/cuda/<build_id>/` mit atomarem Current-Pointer (B9); der flache
+    // Legacy-Pfad (`cuda/jf-whisper-server-cuda.exe`) bleibt als Fallback.
     let cuda_binary = {
         let cuda_dir = data_dir.join("backends").join("cuda");
         let cuda_name = if cfg!(windows) {
@@ -308,7 +311,15 @@ async fn start_server(
         } else {
             "jf-whisper-server-cuda"
         };
-        let exe_path = cuda_dir.join(cuda_name);
+        // 1) Versionierter Build über den Current-Pointer (B9).
+        let versioned_exe: Option<std::path::PathBuf> = std::fs::read_to_string(cuda_dir.join("current.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<backend::artifact::CurrentPointer>(&raw).ok())
+            .map(|current| cuda_dir.join(&current.build_id).join(cuda_name));
+        let exe_path = match versioned_exe {
+            Some(p) if p.exists() => p,
+            _ => cuda_dir.join(cuda_name), // 2) Legacy-Flachlayout.
+        };
         if exe_path.exists() {
             println!("Found CUDA backend at {:?}", cuda_dir);
 
@@ -317,7 +328,7 @@ async fn start_server(
             let app_version = app.config().version.clone().unwrap_or_default();
             let version_ok = match std::process::Command::new(&exe_path)
                 .arg("--version")
-                .current_dir(&cuda_dir)
+                .current_dir(exe_path.parent().unwrap_or(std::path::Path::new(".")))
                 .output()
             {
                 Ok(output) => {
@@ -762,6 +773,397 @@ async fn stop_server(
     }
 
     Ok(())
+}
+
+// ── JFW-12 Block (g): Echte Switch-Prozessschritte (B5/B6) ────────────────
+// Der Supervisor-Actor orchestriert die Sequenz über `switch_driver::run_switch`;
+// diese Factory liefert die echten, blocking Schritte und läuft im Switch-
+// Blocking-Task. Fail-closed: jeder Schrittfehler ist ein `Err` → der Actor
+// setzt NoBackendReady (sichtbar) und schließt das Journal mit dem Grund.
+
+/// Datenroot dieser App-Instanz (%LOCALAPPDATA%\JFWhisper).
+fn jfwhisper_data_root() -> std::path::PathBuf {
+    std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("JFWhisper")
+}
+
+/// Aktive Tasks zählen (`/tasks/active`): Downloads + Generationen.
+fn parse_active_task_count(v: &serde_json::Value) -> Result<usize, String> {
+    let dl = v.get("downloads").and_then(|d| d.as_array()).map(|a| a.len()).unwrap_or(0);
+    let gen = v.get("generations").and_then(|g| g.as_array()).map(|a| a.len()).unwrap_or(0);
+    Ok(dl + gen)
+}
+
+/// JFW-12 Block (g): Echte Prozessschritte für den Supervisor-Switch.
+struct MainSwitchSteps {
+    app: tauri::AppHandle,
+}
+
+impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
+    /// Schritt 1 (B5.2/B6.1): Aktive Jobs drainieren, bis null aktiv.
+    fn drain(&self, _direction: backend::switch_evidence::SwitchDirection) -> Result<(), String> {
+        let state = self.app.state::<ServerState>();
+        let port = *state.sidecar_port.lock().unwrap();
+        let token = state.api_token.lock().unwrap().clone();
+        let generation = state.generation.lock().unwrap().to_string();
+        let (port, token) = match (port, token) {
+            (Some(p), Some(t)) => (p, t),
+            _ => return Err("kein aktives Sidecar zum Drainen".into()),
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .map_err(|e| format!("Drain-Client: {e}"))?;
+        // Idle-Budget (Spec): CPU→CUDA 15 s, CUDA→CPU 10 s gesamt — der Drain
+        // darf davon nur einen Teil verbrauchen.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        loop {
+            let resp = client
+                .get(format!("http://127.0.0.1:{port}/tasks/active"))
+                .header("Authorization", format!("Bearer {token}"))
+                .header("x-jfwhisper-generation", &generation)
+                .send()
+                .map_err(|e| format!("Drain-Abfrage fehlgeschlagen: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("Drain-Abfrage HTTP {}", resp.status()));
+            }
+            let v: serde_json::Value = resp.json().map_err(|e| format!("Drain-Payload: {e}"))?;
+            let active = parse_active_task_count(&v)?;
+            if active == 0 {
+                return Ok(());
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(format!("Drain-Timeout: noch {active} aktive Tasks"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+
+    /// Schritt 2 (B5/B6): Ausgangs-Backend graceful beenden + Prozessbaum schließen.
+    fn teardown_source(&self, _direction: backend::switch_evidence::SwitchDirection) -> Result<(), String> {
+        let state = self.app.state::<ServerState>();
+        let pid = *state.server_pid.lock().unwrap();
+
+        // JFW-12 B8 (Windows): Job entnommen — sein Drop am Ende der Funktion
+        // schließt das Job → KILL_ON_JOB_CLOSE beendet den kompletten Baum.
+        #[cfg(windows)]
+        let _job = state.sidecar_job.lock().unwrap().take();
+        #[cfg(not(windows))]
+        {
+            let _child = state.child.lock().unwrap().take();
+        }
+
+        if let Some(pid) = pid {
+            // Zuerst graceful Shutdown per HTTP (interner Pfad, token-frei).
+            if let Some(port) = *state.sidecar_port.lock().unwrap() {
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(2))
+                    .build()
+                    .map_err(|e| format!("Teardown-Client: {e}"))?;
+                let _ = client.post(format!("http://127.0.0.1:{port}/shutdown")).send();
+            }
+
+            // Auf Exit warten (max. 5 s); bleibt der Prozess, tötet das Job-Close.
+            #[cfg(windows)]
+            {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while is_process_alive(pid) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                if is_process_alive(pid) {
+                    eprintln!("teardown_source: PID {pid} überlebt graceful Shutdown — Job-Close tötet den Baum");
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                use std::process::Command;
+                let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).output();
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let _ = Command::new("kill").args(["-9", "--", &format!("-{pid}")]).output();
+            }
+
+            *state.server_pid.lock().unwrap() = None;
+        }
+        // `job` wird hier gedroppt → KILL_ON_JOB_CLOSE (Windows).
+        Ok(())
+    }
+
+    /// Schritt 3 (B5.4/B6.2): Ziel-Backend starten + Ready-Handshake abwarten.
+    fn start_target(&self, direction: backend::switch_evidence::SwitchDirection) -> Result<SidecarInstance, String> {
+        let variant = match direction {
+            backend::switch_evidence::SwitchDirection::CpuToCuda => BackendVariant::Cuda,
+            backend::switch_evidence::SwitchDirection::CudaToCpu => BackendVariant::Cpu,
+        };
+
+        // 1) Ziel-Binary auflösen. CPU: gebündelte Sidecar (identisch zum Boot).
+        //    CUDA: installierter Build über den Current-Pointer (B9).
+        let data_dir = jfwhisper_data_root();
+        let (exe_path, cwd): (std::path::PathBuf, Option<std::path::PathBuf>) = match variant {
+            BackendVariant::Cpu => (resolve_sidecar_path(), None),
+            BackendVariant::Cuda => {
+                #[cfg(not(windows))]
+                return Err("CUDA-Switch erfordert Windows (B8: Job-Objects)".into());
+                #[cfg(windows)]
+                {
+                    let cuda_root = data_dir.join("backends").join("cuda");
+                    let current_raw = std::fs::read_to_string(cuda_root.join("current.json"))
+                        .map_err(|e| format!("CUDA-Artefakt nicht installiert (current.json: {e})"))?;
+                    let current: backend::artifact::CurrentPointer =
+                        serde_json::from_str(&current_raw).map_err(|e| format!("current.json ungültig: {e}"))?;
+                    let dir = cuda_root.join(&current.build_id);
+                    (dir.join("jf-whisper-server-cuda.exe"), Some(dir))
+                }
+            }
+        };
+        if !exe_path.exists() {
+            return Err(format!("Ziel-Binary fehlt: {}", exe_path.display()));
+        }
+
+        // 2) Neues Bearer-Token + Generation (JFW-1: pro Start, nur per Umgebung).
+        let state = self.app.state::<ServerState>();
+        use rand::Rng;
+        let api_token: String = {
+            let mut rng = rand::thread_rng();
+            const ALPHABET: [char; 16] = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p'];
+            (0..32).map(|_| ALPHABET[rng.gen_range(0usize..16)]).collect()
+        };
+        *state.api_token.lock().unwrap() = Some(api_token.clone());
+        let generation = {
+            let mut g = state.generation.lock().unwrap();
+            *g += 1;
+            *g
+        };
+
+        // 3) DB-Migrations-Kontrakt (Release, CPU-Binary — identisch zum Boot).
+        //    Innerhalb einer App-Epoche ist die DB unverändert; der Check bleibt
+        //    fail-closed und schützt vor einem fremden Schema-Head.
+        #[cfg(not(debug_assertions))]
+        {
+            let db_path = data_dir.join("data").join("jf-whisper.db");
+            let cpu_exe = resolve_sidecar_path();
+            let status_output = std::process::Command::new(&cpu_exe)
+                .arg("--schema-status")
+                .arg(&db_path)
+                .output()
+                .map_err(|e| format!("Schema-Status konnte nicht gestartet werden: {e}"))?;
+            if !status_output.status.success() {
+                let stderr = String::from_utf8_lossy(&status_output.stderr);
+                return Err(format!(
+                    "DB-Schema-Status fehlgeschlagen (Exit {}): {}. Switch abgelehnt.",
+                    status_output.status.code().unwrap_or(-1),
+                    stderr.trim()
+                ));
+            }
+            let migrate_output = std::process::Command::new(&cpu_exe)
+                .arg("--migrate-only")
+                .arg(&db_path)
+                .output()
+                .map_err(|e| format!("Schema-Migration konnte nicht gestartet werden: {e}"))?;
+            if !migrate_output.status.success() {
+                let stderr = String::from_utf8_lossy(&migrate_output.stderr);
+                return Err(format!(
+                    "DB-Schema-Migration fehlgeschlagen (Exit {}): {}. Switch abgelehnt — \
+                     die DB bleibt unverändert, Backup liegt in backups/.",
+                    migrate_output.status.code().unwrap_or(-1),
+                    stderr.trim()
+                ));
+            }
+        }
+
+        // 4) Spawn: Windows → CreateProcessW + Job Object (B8); sonst Tauri-Shell.
+        let data_dir_str = data_dir.to_string_lossy().into_owned();
+        let port_str = "0".to_string();
+        let parent_pid_str = std::process::id().to_string();
+        let extra_env: Vec<(String, String)> = vec![
+            ("JFWHISPER_API_TOKEN".to_string(), api_token),
+            ("JFWHISPER_GENERATION".to_string(), generation.to_string()),
+        ];
+
+        #[cfg(windows)]
+        {
+            use backend::process_windows::{spawn_sidecar, SidecarLine};
+            let args: Vec<String> = vec![
+                "--data-dir".into(), data_dir_str.clone(),
+                "--port".into(), port_str.clone(),
+                "--parent-pid".into(), parent_pid_str.clone(),
+            ];
+            let (proc, mut line_rx): (backend::process_windows::SidecarJob, tokio::sync::mpsc::Receiver<backend::process_windows::SidecarLine>) =
+                spawn_sidecar(&exe_path, &args, &extra_env, cwd.as_deref())
+                    .map_err(|e| format!("Ziel-Spawn fehlgeschlagen: {e}"))?;
+            let pid = proc.identity.pid;
+
+            // Bridge: SidecarLine → std-Channel (blocking recv mit Timeout).
+            let (std_tx, std_rx) = std::sync::mpsc::channel::<Result<String, String>>();
+            tauri::async_runtime::spawn(async move {
+                while let Some(line) = line_rx.recv().await {
+                    let s = match line {
+                        SidecarLine::Stdout(s) => Ok(s),
+                        SidecarLine::Stderr(s) => Err(s),
+                    };
+                    if std_tx.send(s).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            // 5) Ready-Handshake (JFW-1: strukturierte JSON-Zeile, Port bindend).
+            let instance = wait_sidecar_ready(&std_rx, pid, variant, &exe_path)?;
+            *state.server_pid.lock().unwrap() = Some(pid);
+            *state.sidecar_job.lock().unwrap() = Some(proc);
+            *state.sidecar_port.lock().unwrap() = Some(instance.port);
+            Ok(instance)
+        }
+
+        #[cfg(not(windows))]
+        {
+            use tauri_plugin_shell::process::CommandEvent;
+            let (mut rx, child) = {
+                let mut sidecar = self.app.shell().sidecar("jf-whisper-server")
+                    .map_err(|e| format!("Failed to get sidecar: {e}"))?;
+                sidecar = sidecar.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
+                for (k, v) in &extra_env {
+                    sidecar = sidecar.env(k.as_str(), v.as_str());
+                }
+                match sidecar.spawn() {
+                    Ok(result) => result,
+                    Err(e) => return Err(format!("Ziel-Spawn fehlgeschlagen: {e}")),
+                }
+            };
+            let pid = child.pid();
+
+            // Bridge: CommandEvent → std-Channel (blocking recv mit Timeout).
+            let (std_tx, std_rx) = std::sync::mpsc::channel::<Result<String, String>>();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let s = match event {
+                        CommandEvent::Stdout(b) => Ok(String::from_utf8_lossy(&b).into_owned()),
+                        CommandEvent::Stderr(b) => Err(String::from_utf8_lossy(&b).into_owned()),
+                        _ => continue,
+                    };
+                    if std_tx.send(s).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let instance = wait_sidecar_ready(&std_rx, pid, variant, &exe_path)?;
+            *state.server_pid.lock().unwrap() = Some(pid);
+            *state.child.lock().unwrap() = Some(child);
+            *state.sidecar_port.lock().unwrap() = Some(instance.port);
+            Ok(instance)
+        }
+    }
+
+    /// Schritt 4 (B5.6/B6.2): `/health` grün — interner Pfad, token-frei.
+    fn readiness_smoke(&self, instance: &SidecarInstance) -> Result<(), String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("Readiness-Client: {e}"))?;
+        let resp = client
+            .get(format!("http://127.0.0.1:{}/health", instance.port))
+            .send()
+            .map_err(|e| format!("Health-Abfrage fehlgeschlagen: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Health HTTP {}", resp.status()));
+        }
+        let v: serde_json::Value = resp.json().map_err(|e| format!("Health-Payload: {e}"))?;
+        match v.get("status").and_then(|s| s.as_str()) {
+            Some("healthy") => Ok(()),
+            other => Err(format!("Health nicht healthy: {other:?}")),
+        }
+    }
+
+    /// Schritt 5 (B6.6–7, nur CudaToCpu): doppelte negative VRAM-Probe — der
+    /// alte CUDA-PID darf in zwei aufeinanderfolgenden NVML-Proben (≥1 s Abstand)
+    /// nicht mehr als Compute-Prozess sichtbar sein.
+    fn vram_evidence(&self, old_cuda_pid: Option<u32>) -> Result<(), String> {
+        let pid = old_cuda_pid.ok_or("VRAM-Evidence unmöglich: kein bekannter CUDA-PID")?;
+        for attempt in 0..2u32 {
+            let probe = backend::gpu_evidence::GpuContextProbe::capture()
+                .map_err(|e| format!("NVML-Probe fehlgeschlagen: {e}"))?;
+            if probe.contains_pid(pid) {
+                return Err(format!("CUDA-Prozess (PID {pid}) noch aktiv — VRAM nicht freigegeben"));
+            }
+            if attempt == 0 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+        Ok(())
+    }
+
+    /// Fail-closed nach Zielstart (B5.8/B6.8): frisch gestartetes Ziel beenden.
+    fn teardown_target(&self, instance: &SidecarInstance) {
+        let state = self.app.state::<ServerState>();
+        if *state.server_pid.lock().unwrap() != Some(instance.pid) {
+            eprintln!("teardown_target: PID {} ist nicht das aktuelle Sidecar — übersprungen", instance.pid);
+            return;
+        }
+        // Graceful per HTTP, dann Job-Close (Drop am Ende der Funktion).
+        #[cfg(windows)]
+        let _job = state.sidecar_job.lock().unwrap().take();
+        #[cfg(not(windows))]
+        {
+            let _child = state.child.lock().unwrap().take();
+        }
+        if let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+        {
+            let _ = client.post(format!("http://127.0.0.1:{}/shutdown", instance.port)).send();
+        }
+        #[cfg(windows)]
+        {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while is_process_alive(instance.pid) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        *state.server_pid.lock().unwrap() = None;
+        // `job` wird hier gedroppt → KILL_ON_JOB_CLOSE (Windows).
+    }
+}
+
+/// Ready-Handshake abwarten: bis 120 s auf die strukturierte JSON-Zeile
+/// (`jfwhisper_ready`) warten; Port/PID/Variante sind für den Caller bindend.
+fn wait_sidecar_ready(
+    rx: &std::sync::mpsc::Receiver<Result<String, String>>,
+    pid: u32,
+    variant: BackendVariant,
+    exe_path: &std::path::Path,
+) -> Result<SidecarInstance, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if std::time::Instant::now() > deadline {
+            return Err("Ziel-Startup-Timeout nach 120 s".into());
+        }
+        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(Ok(line)) => {
+                let line_str = line;
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line_str.trim()) {
+                    if v.get("jfwhisper_ready").and_then(|b| b.as_bool()) == Some(true) {
+                        let port = v.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                        return Ok(SidecarInstance::new(
+                            pid,
+                            exe_path.to_string_lossy().into_owned(),
+                            variant,
+                            port,
+                            String::new(), // Build-ID fehlt im Handshake (wie Boot-Pfad).
+                        ));
+                    }
+                }
+            }
+            Ok(Err(err_line)) => {
+                eprintln!("Ziel-Sidecar stderr: {}", err_line);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("Ziel-Prozess endete unerwartet während des Startups".into());
+            }
+        }
+    }
 }
 
 // ── JFW-12 B2/D: Typisierte Supervisor-Commands (Surface) ────────────────
@@ -1346,7 +1748,12 @@ pub fn run() {
                 env!("CARGO_PKG_VERSION").to_string(),
                 env!("JFW_BUILD_ID").to_string(),
             );
-            app.manage(backend::supervisor::Supervisor::start(app.handle().clone(), manager));
+            // JFW-12 Block (g): Echte Switch-Prozessschritte aus main.rs — der
+            // Supervisor spawnt pro angenommener Operation einen Blocking-Task,
+            // der run_switch mit diesen Closures füttert.
+            let switch_steps: std::sync::Arc<dyn backend::switch_driver::SwitchStepFactory> =
+                std::sync::Arc::new(MainSwitchSteps { app: app.handle().clone() });
+            app.manage(backend::supervisor::Supervisor::start(app.handle().clone(), manager, Some(switch_steps)));
 
             #[cfg(desktop)]
             {

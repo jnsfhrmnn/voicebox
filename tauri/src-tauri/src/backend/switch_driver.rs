@@ -120,6 +120,25 @@ fn fail_after_start(
     SwitchOutcome::Failed(reason)
 }
 
+/// Echte Prozessschritte eines angenommenen Idle-Switches (B5/B6) — injiziert
+/// von `main.rs` als Factory in den Supervisor. Alle Methoden sind **blocking**
+/// und laufen im Switch-Blocking-Task; `Err` = Schrittfehler → fail-closed.
+pub trait SwitchStepFactory: Send + Sync {
+    /// Schritt 1 (B5.2/B6.1): aktive Jobs drainieren, bis null aktiv.
+    fn drain(&self, direction: SwitchDirection) -> Result<(), String>;
+    /// Schritt 2 (B5/B6): Ausgangs-Backend graceful beenden + Prozessbaum schließen.
+    fn teardown_source(&self, direction: SwitchDirection) -> Result<(), String>;
+    /// Schritt 3 (B5.4/B6.2): Ziel-Backend starten + Ready-Handshake abwarten.
+    fn start_target(&self, direction: SwitchDirection) -> Result<SidecarInstance, String>;
+    /// Schritt 4 (B5.6/B6.2): `/health` grün + Modellbereitschaft bestätigt.
+    fn readiness_smoke(&self, instance: &SidecarInstance) -> Result<(), String>;
+    /// Schritt 5 (B6.6–7, nur CudaToCpu): doppelte negative VRAM-Probe für den
+    /// Ausgangs-PID; `None` = kein bekannter PID → fail-closed.
+    fn vram_evidence(&self, old_cuda_pid: Option<u32>) -> Result<(), String>;
+    /// Fail-closed nach Zielstart (B5.8/B6.8): frisch gestartetes Ziel beenden.
+    fn teardown_target(&self, instance: &SidecarInstance);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

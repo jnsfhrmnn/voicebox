@@ -67,6 +67,10 @@ pub struct Supervisor {
     state: Arc<Mutex<BackendSupervisorState>>,
     /// CUDA-Artefaktmanager (B9): Backend-Root, App-Version, Build-ID.
     manager: Manager,
+    /// JFW-12 Block (g): Factory für die echten Switch-Prozessschritte aus
+    /// `main.rs` (Drain/Teardown/Zielstart/Readiness/VRAM). `None` nur in
+    /// Tests; ein angenommener Switch ohne Steps ist fail-closed.
+    switch_steps: Option<Arc<dyn crate::backend::switch_driver::SwitchStepFactory>>,
 }
 
 impl Clone for Supervisor {
@@ -79,6 +83,7 @@ impl Clone for Supervisor {
                 self.manager.app_version.clone(),
                 self.manager.build_id.clone(),
             ),
+            switch_steps: self.switch_steps.as_ref().map(Arc::clone),
         }
     }
 }
@@ -98,7 +103,13 @@ impl Supervisor {
     /// Startet den Actor und liefert den State-Handle. Muss vor dem ersten
     /// Window/Command verfügbar sein (Tauri `setup`). Der übergebene Manager
     /// trägt Backend-Root, App-Version und Build-ID des laufenden Builds (B9).
-    pub fn start(app: AppHandle, manager: Manager) -> Self {
+    /// `switch_steps` sind die echten Prozessschritte aus `main.rs` (Block g);
+    /// ohne Factory ist jeder angenommene Switch fail-closed.
+    pub fn start(
+        app: AppHandle,
+        manager: Manager,
+        switch_steps: Option<Arc<dyn crate::backend::switch_driver::SwitchStepFactory>>,
+    ) -> Self {
         let app_epoch = new_app_epoch();
         let state = Arc::new(Mutex::new(BackendSupervisorState::new(app_epoch.clone())));
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Command>(MAILBOX_CAPACITY);
@@ -110,6 +121,8 @@ impl Supervisor {
         let mgr_base_dir = manager.base_dir.clone();
         let mgr_app_version = manager.app_version.clone();
         let mgr_build_id = manager.build_id.clone();
+        // JFW-12 Block (g): Steps-Factory für die Switch-Blocking-Tasks.
+        let switch_steps_for_ops = switch_steps.as_ref().map(Arc::clone);
         tauri::async_runtime::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
@@ -190,36 +203,96 @@ impl Supervisor {
                                         OperationKind::SwitchToCpu
                                     }
                                 };
-                                apply(&app, &actor_state, |st| {
-                                    let from_gen = st.runtime.active_generation().unwrap_or(0);
-                                    let op = Operation::new(kind);
-                                    // Switch-Evidenz eröffnen (Spec C, AC-F): inhaltsfrei;
-                                    // wird beim terminalen Schritt abgeschlossen + Journal.
-                                    let evidence = crate::backend::switch_evidence::SwitchEvidence::new(
-                                        op.operation_id.clone(),
-                                        direction,
-                                        st.app_epoch.clone(),
-                                        from_gen,
-                                    );
-                                    st.evidence = Some(evidence);
-                                    st.operation = Some(op.clone());
-                                    // Drain-Phase: Admission ist jetzt geschlossen (B2).
+                                // JFW-12 Block (g): Ausgangs-PID für die VRAM-Evidence
+                                // (B6.6–7) — vor der Transition lesen, weil SwitchTargetReady
+                                // die Instanz aus dem State entfernt.
+                                let old_cuda_pid = {
+                                    let st = actor_state.lock().unwrap();
                                     match direction {
-                                        crate::backend::switch_evidence::SwitchDirection::CpuToCuda => {
-                                            if !runtime_transition(&st.runtime, &RuntimePhase::DrainingCpu(op.operation_id.clone())) {
-                                                eprintln!("supervisor: abgelehnte Transition {:?} -> DrainingCpu", st.runtime);
-                                                return;
-                                            }
-                                            st.runtime = RuntimePhase::DrainingCpu(op.operation_id);
-                                        }
                                         crate::backend::switch_evidence::SwitchDirection::CudaToCpu => {
-                                            if !runtime_transition(&st.runtime, &RuntimePhase::DrainingCuda(op.operation_id.clone())) {
-                                                eprintln!("supervisor: abgelehnte Transition {:?} -> DrainingCuda", st.runtime);
-                                                return;
-                                            }
-                                            st.runtime = RuntimePhase::DrainingCuda(op.operation_id);
+                                            st.cuda_instance.as_ref().map(|i| i.pid)
                                         }
+                                        _ => None,
                                     }
+                                };
+                                let op_id = {
+                                    apply(&app, &actor_state, |st| {
+                                        let from_gen = st.runtime.active_generation().unwrap_or(0);
+                                        let op = Operation::new(kind);
+                                        // Switch-Evidenz eröffnen (Spec C, AC-F): inhaltsfrei;
+                                        // wird beim terminalen Schritt abgeschlossen + Journal.
+                                        let evidence = crate::backend::switch_evidence::SwitchEvidence::new(
+                                            op.operation_id.clone(),
+                                            direction,
+                                            st.app_epoch.clone(),
+                                            from_gen,
+                                        );
+                                        st.evidence = Some(evidence);
+                                        st.operation = Some(op.clone());
+                                        // Drain-Phase: Admission ist jetzt geschlossen (B2).
+                                        match direction {
+                                            crate::backend::switch_evidence::SwitchDirection::CpuToCuda => {
+                                                if !runtime_transition(&st.runtime, &RuntimePhase::DrainingCpu(op.operation_id.clone())) {
+                                                    eprintln!("supervisor: abgelehnte Transition {:?} -> DrainingCpu", st.runtime);
+                                                    return;
+                                                }
+                                                st.runtime = RuntimePhase::DrainingCpu(op.operation_id);
+                                            }
+                                            crate::backend::switch_evidence::SwitchDirection::CudaToCpu => {
+                                                if !runtime_transition(&st.runtime, &RuntimePhase::DrainingCuda(op.operation_id.clone())) {
+                                                    eprintln!("supervisor: abgelehnte Transition {:?} -> DrainingCuda", st.runtime);
+                                                    return;
+                                                }
+                                                st.runtime = RuntimePhase::DrainingCuda(op.operation_id);
+                                            }
+                                        }
+                                    });
+                                    // op_id aus dem State lesen (Operation ist gesetzt).
+                                    actor_state.lock().unwrap().operation.as_ref().map(|o| o.operation_id.clone())
+                                };
+                                let Some(op_id) = op_id else { return; };
+
+                                // JFW-12 Block (g): Echte Prozessschritte im Blocking-Task.
+                                // Die Sequenz + Rollback-Logik lebt in switch_driver::run_switch;
+                                // die Closures liefern Drain/Teardown/Zielstart/Readiness/VRAM aus
+                                // main.rs und melden den terminalen Zustand über die Mailbox.
+                                let steps = match &switch_steps_for_ops {
+                                    Some(s) => Arc::clone(s),
+                                    None => {
+                                        eprintln!("supervisor: Switch angenommen, aber keine Prozessschritte injiziert — fail-closed");
+                                        let _ = tx_for_ops.try_send(Command::SwitchFailed {
+                                            op_id: op_id.clone(),
+                                            reason: "keine Switch-Prozessschritte injiziert".into(),
+                                        });
+                                        return;
+                                    }
+                                };
+                                let tx2 = tx_for_ops.clone();
+                                tauri::async_runtime::spawn_blocking(move || {
+                                    use crate::backend::switch_driver::{run_switch, SwitchContext};
+                                    let ctx = SwitchContext { op_id: op_id.clone(), direction };
+                                    run_switch(
+                                        &ctx,
+                                        || steps.drain(direction),
+                                        || steps.teardown_source(direction),
+                                        || steps.start_target(direction),
+                                        |i| steps.readiness_smoke(i),
+                                        if matches!(direction, crate::backend::switch_evidence::SwitchDirection::CudaToCpu) {
+                                            // Eigener Arc-Klon: die Box-Closure ist 'static und
+                                            // darf den von den anderen Closures geborrowten `steps`
+                                            // nicht weg-moven.
+                                            let vram_steps = Arc::clone(&steps);
+                                            Some(Box::new(move |_: &SidecarInstance| {
+                                                vram_steps.vram_evidence(old_cuda_pid)
+                                            }))
+                                        } else {
+                                            None
+                                        },
+                                        |i| steps.teardown_target(i),
+                                        || { let _ = tx2.try_send(Command::SwitchDrained { op_id: op_id.clone() }); },
+                                        |instance| { let _ = tx2.try_send(Command::SwitchTargetReady { op_id: op_id.clone(), instance }); },
+                                        |reason| { let _ = tx2.try_send(Command::SwitchFailed { op_id: op_id.clone(), reason }); },
+                                    );
                                 });
                             }
                         }
@@ -496,7 +569,7 @@ impl Supervisor {
             }
         });
 
-        Self { tx, state, manager }
+        Self { tx, state, manager, switch_steps }
     }
 
     /// Vor dem CPU-Spawn aufrufen (bestehender Pfad in main.rs).

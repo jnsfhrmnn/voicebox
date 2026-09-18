@@ -190,8 +190,10 @@ impl Manager {
     /// Deployvertrag durch den produktiven Key ersetzt; Key-Rotation benötigt eine
     /// neue signierte CPU-App-Version (B9).
     fn embedded_public_key() -> &'static str {
-        // PLACEHOLDER — wird im Deployvertrag durch den echten Addon-Key ersetzt.
-        "RWRlZDI1NTE5LWpmd2hpc3Blci1hZGRvbi1wdWJsaWMta2V5"
+        // JFW-12 Block (g): produktiver Addon-Public-Key (B9). Der Private Key bleibt
+        // ausschließlich im kontrollierten Releaseprozess (release-assets/keys, gitignored);
+        // Key-Rotation benötigt eine neue signierte CPU-App-Version.
+        "RWQdKaxwrmr7+x4bgeRn0Zpd8RS8Tekb1TR9M97WbzwOMjzWJRijO/xh"
     }
 
     /// Eingebetteter jf-whisper-Releasepfad (B9): die UI akzeptiert keine freie
