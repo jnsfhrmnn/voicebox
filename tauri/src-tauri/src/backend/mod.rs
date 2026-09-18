@@ -17,5 +17,6 @@ pub mod artifact;
 pub mod gpu_evidence;
 pub mod state;
 pub mod supervisor;
+pub mod switch_driver;
 pub mod switch_evidence;
 pub mod switch_plan;
