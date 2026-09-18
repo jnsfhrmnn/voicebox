@@ -25,9 +25,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tar::EntryType;
 
-/// Max. entpackte Größe (B9: Größenüberschreitung wird abgelehnt). 4 GiB deckt
-/// ein CUDA-`onedir`-Archiv mit PyTorch/CUDA-Runtime großzügig ab.
-pub const MAX_UNPACKED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// Max. entpackte Größe (B9: Größenüberschreitung wird abgelehnt). 8 GiB deckt
+/// ein CUDA-`onedir`-Archiv mit PyTorch/CUDA-Runtime großzügig ab — der erste
+/// reale Build (0.5.0, torch 2.10+cu128) misst 4,52 GB entpackt; die frühere
+/// 4-GiB-Schätzung lag unter dem Ist-Wert und wurde am Messwert kalibriert.
+pub const MAX_UNPACKED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// Max. Archivgröße (komprimiert).
 pub const MAX_ARCHIVE_BYTES: u64 = 3 * 1024 * 1024 * 1024;
@@ -928,6 +930,51 @@ mod tests {
             .install_from_paths(&archive_path, &staging.join("manifest.json"), |_| {})
             .expect_err("Build-ID-Drift muss abgelehnt werden");
         assert!(err.contains("Build-ID"), "unerwarteter Fehler: {err}");
+    }
+
+    /// JFW-12 Block (g) E2E: Verifiziert das REALE signierte CUDA-Release über die
+    /// Manager-Produktionspfade (`verify_manifest_signature` → `verify_manifest_contract`
+    /// → `verify_signature`) mit dem eingebetteten Public Key — kein Test-Key.
+    /// Läuft nur, wenn `JFW_RELEASE_DIR` auf ein Release-Verzeichnis zeigt
+    /// (manifest.json + .sig + Archiv + Archiv.sig); sonst skip.
+    #[test]
+    fn e2e_real_release_verifies_with_embedded_key() {
+        let dir = match std::env::var("JFW_RELEASE_DIR") {
+            Ok(d) => d,
+            Err(_) => {
+                eprintln!("SKIP: JFW_RELEASE_DIR nicht gesetzt");
+                return;
+            }
+        };
+        let root = Path::new(&dir);
+
+        // Manager ohne Test-Key → eingebetteter Public Key (Produktionspfad).
+        let manager = Manager::new(
+            root.to_path_buf(),
+            "0.5.0".into(),
+            env!("JFW_BUILD_ID").to_string(),
+        );
+
+        // 1) Manifest laden + Minisign-Signatur gegen eingebetteten Key.
+        let manifest = manager
+            .verify_manifest_signature(&root.join("manifest.json"))
+            .expect("Manifest-Signatur muss mit eingebettetem Key verifizieren");
+
+        // 2) Manifest-Kontrakt (Version/Build-ID/Variante/Negativinventar).
+        manager
+            .verify_manifest_contract(&manifest)
+            .expect("Manifest-Kontrakt muss halten");
+
+        // 3) Archiv: Minisign-Stream + SHA-256-Bindung zum Manifest.
+        let archive_path = root.join(&manifest.archive_name);
+        manager
+            .verify_signature(&archive_path, &manifest)
+            .expect("Archiv-Signatur muss mit eingebettetem Key verifizieren");
+
+        eprintln!(
+            "E2E OK: reales Release {} verifiziert (Manifest + Kontrakt + Archiv) gegen eingebetteten Key",
+            manifest.build_id
+        );
     }
 
     fn test_manifest() -> Manifest {
