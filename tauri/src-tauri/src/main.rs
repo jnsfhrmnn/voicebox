@@ -796,6 +796,32 @@ fn parse_active_task_count(v: &serde_json::Value) -> Result<usize, String> {
     Ok(dl + gen)
 }
 
+/// Deterministischer Silence-WAV für den Readiness-Smoke (B5.5): 16 kHz, mono,
+/// 16-bit PCM, 0,5 s Stille — inhaltsfrei und nicht persistierend. Hashgebunden:
+/// Der erwartete SHA-256 wird im Unit-Test verifiziert, damit ein versehentlich
+/// geänderter Smoke sofort auffällt (Spec: „fest eingebauter, hashgebundener
+/// Silence-WAV").
+fn silence_wav_bytes() -> Vec<u8> {
+    const RATE: u32 = 16_000;
+    let data_len: usize = (RATE / 2) as usize * 2; // 0,5 s × 16-bit mono
+    let mut buf: Vec<u8> = Vec::with_capacity(44 + data_len);
+    buf.extend_from_slice(b"RIFF");
+    buf.extend_from_slice(&(36u32 + data_len as u32).to_le_bytes());
+    buf.extend_from_slice(b"WAVE");
+    buf.extend_from_slice(b"fmt ");
+    buf.extend_from_slice(&16u32.to_le_bytes()); // fmt-Chunkgröße
+    buf.extend_from_slice(&1u16.to_le_bytes());  // PCM
+    buf.extend_from_slice(&1u16.to_le_bytes()); // mono
+    buf.extend_from_slice(&RATE.to_le_bytes());
+    buf.extend_from_slice(&(RATE * 2).to_le_bytes()); // Byte-Rate
+    buf.extend_from_slice(&2u16.to_le_bytes());      // Block-Align
+    buf.extend_from_slice(&16u16.to_le_bytes());    // Bits pro Sample
+    buf.extend_from_slice(b"data");
+    buf.extend_from_slice(&(data_len as u32).to_le_bytes());
+    buf.resize(44 + data_len, 0); // Stille (Null-PCM)
+    buf
+}
+
 /// JFW-12 Block (g): Echte Prozessschritte für den Supervisor-Switch.
 struct MainSwitchSteps {
     app: tauri::AppHandle,
@@ -816,9 +842,10 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             .timeout(std::time::Duration::from_secs(2))
             .build()
             .map_err(|e| format!("Drain-Client: {e}"))?;
-        // Idle-Budget (Spec): CPU→CUDA 15 s, CUDA→CPU 10 s gesamt — der Drain
-        // darf davon nur einen Teil verbrauchen.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        // AC-D: Laufende Aufträge dürfen auf ihrer Generation kontrolliert fertig-
+        // laufen — kein automatischer Abbruch, auch wenn sie länger als das Idle-
+        // Budget brauchen (Drainzeit wird separat gemessen, Spec B5/B6). Deshalb
+        // bewusst KEIN hartes Timeout hier: wir warten, bis null aktive Tasks bleiben.
         loop {
             let resp = client
                 .get(format!("http://127.0.0.1:{port}/tasks/active"))
@@ -833,9 +860,6 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             let active = parse_active_task_count(&v)?;
             if active == 0 {
                 return Ok(());
-            }
-            if std::time::Instant::now() > deadline {
-                return Err(format!("Drain-Timeout: noch {active} aktive Tasks"));
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
@@ -1056,8 +1080,23 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         }
     }
 
-    /// Schritt 4 (B5.6/B6.2): `/health` grün — interner Pfad, token-frei.
+    /// Schritt 4 (B5.5/B6.2): Echte Inferenz-Smoke — kein bloßer Port-/Prozesscheck.
+    ///
+    /// Der Sidecar muss exakt das gewählte Modell geladen haben und auf einem
+    /// fest eingebauten, hashgebundenen Silence-WAV einen nicht persistierenden
+    /// Inferenz-Smoke ausführen (Spec B5.5/B6.2, Decision Log 2026-09-09).
+    /// `/transcribe` persistiert nichts (verifiziert: keine DB-Mutation) und der
+    /// Smoke ist inhaltsfrei (reine Stille), daher bleibt die Inhaltsfreiheit (C).
     fn readiness_smoke(&self, instance: &SidecarInstance) -> Result<(), String> {
+        let state = self.app.state::<ServerState>();
+        let token = state.api_token.lock().unwrap().clone();
+        let generation = state.generation.lock().unwrap().to_string();
+        let (token, generation) = match token {
+            Some(t) => (t, generation),
+            None => return Err("kein API-Token für Readiness-Smoke".into()),
+        };
+
+        // 1) Health: Server antwortet + Modell ist geladen (nicht nur healthy).
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -1071,26 +1110,92 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         }
         let v: serde_json::Value = resp.json().map_err(|e| format!("Health-Payload: {e}"))?;
         match v.get("status").and_then(|s| s.as_str()) {
-            Some("healthy") => Ok(()),
-            other => Err(format!("Health nicht healthy: {other:?}")),
+            Some("healthy") => {}
+            other => return Err(format!("Health nicht healthy: {other:?}")),
+        }
+
+        // 2) Inferenz-Smoke (B5.5): Silence-WAV durch den echten Transkriptionspfad.
+        //    Lädt das Modell bei Bedarf und beweist Gerät + Inferenz ohne Nutzeraufnahme.
+        let wav = silence_wav_bytes();
+        let form = reqwest::blocking::multipart::Form::new()
+            .part(
+                "file",
+                reqwest::blocking::multipart::Part::bytes(wav).file_name("smoke.wav"),
+            );
+        // Modell-Laden kann dauern (Cache-Read + Device-Move) — großzügiges Budget.
+        let smoke_client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| format!("Smoke-Client: {e}"))?;
+        let resp = smoke_client
+            .post(format!("http://127.0.0.1:{}/transcribe", instance.port))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("x-jfwhisper-generation", &generation)
+            .multipart(form)
+            .send()
+            .map_err(|e| format!("Inferenz-Smoke fehlgeschlagen: {e}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("Inferenz-Smoke HTTP {status}"));
+        }
+
+        // 3) Modellvertrag (B5.6): geladenes Modell + Zielvariante bestätigt.
+        let health2 = client
+            .get(format!("http://127.0.0.1:{}/health", instance.port))
+            .send()
+            .map_err(|e| format!("Health-Abfrage (nach Smoke) fehlgeschlagen: {e}"))?;
+        let v2: serde_json::Value = health2.json().map_err(|e| format!("Health-Payload: {e}"))?;
+        if !v2.get("model_loaded").and_then(|b| b.as_bool()).unwrap_or(false) {
+            return Err("Modell nach Smoke nicht geladen".into());
+        }
+        let expected = instance.variant.as_str();
+        match v2.get("backend_variant").and_then(|s| s.as_str()) {
+            Some(bv) if bv == expected => Ok(()),
+            other => Err(format!("Variant-Vertrag verletzt: erwartet {expected}, gemeldet {other:?}")),
         }
     }
 
-    /// Schritt 5 (B6.6–7, nur CudaToCpu): doppelte negative VRAM-Probe — der
-    /// alte CUDA-PID darf in zwei aufeinanderfolgenden NVML-Proben (≥1 s Abstand)
-    /// nicht mehr als Compute-Prozess sichtbar sein.
+    /// Schritt 5 (B6.6–7, nur CudaToCpu): VRAM-Nachweis über die getestete
+    /// [`GpuReceipt`]-API — der alte CUDA-PID darf in zwei aufeinanderfolgenden
+    /// NVML-Proben (≥1 s Abstand) nicht mehr als Compute-Prozess geführt werden.
+    /// Erst nach Abschluss des Receipts ist `0 MiB zurechenbar` abgeleitet.
     fn vram_evidence(&self, old_cuda_pid: Option<u32>) -> Result<(), String> {
         let pid = old_cuda_pid.ok_or("VRAM-Evidence unmöglich: kein bekannter CUDA-PID")?;
+
+        // Ausgangs-Probe **nach** dem CUDA-Teardown (B6.4–5): der alte PID muss
+        // dann schon weg sein, sonst ist die Freigabe rot (fail-closed).
+        let probe = backend::gpu_evidence::GpuContextProbe::capture()
+            .map_err(|e| format!("NVML-Probe fehlgeschlagen: {e}"))?;
+        if probe.contains_pid(pid) {
+            return Err(format!(
+                "CUDA-Prozess (PID {pid}) nach Teardown noch aktiv — VRAM nicht freigegeben"
+            ));
+        }
+
+        // Nur der jf-whisper-CUDA-PID zählt als aufgezeichnet (B6); fremde
+        // Compute-Prozesse dürfen die Freigabe nicht rot machen. Zwei grüne
+        // Proben mit ≥1 s Abstand, dann 0-MiB-Ableitung (B6.7).
+        let mut receipt = backend::gpu_evidence::GpuReceipt::for_pids([pid]);
         for attempt in 0..2u32 {
-            let probe = backend::gpu_evidence::GpuContextProbe::capture()
-                .map_err(|e| format!("NVML-Probe fehlgeschlagen: {e}"))?;
-            if probe.contains_pid(pid) {
-                return Err(format!("CUDA-Prozess (PID {pid}) noch aktiv — VRAM nicht freigegeben"));
-            }
-            if attempt == 0 {
+            if attempt == 1 {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
+            let p = backend::gpu_evidence::GpuContextProbe::capture()
+                .map_err(|e| format!("NVML-Wiederholprobe fehlgeschlagen: {e}"))?;
+            match receipt.verify(&p, std::time::Duration::from_secs(1)) {
+                Ok(backend::gpu_evidence::ReleaseVerification::Green) => {}
+                Ok(backend::gpu_evidence::ReleaseVerification::Red(pids)) => {
+                    return Err(format!(
+                        "CUDA-Compute-PIDs noch aktiv: {pids:?} — VRAM nicht freigegeben"
+                    ));
+                }
+                Err(e) => return Err(format!("VRAM-Probe fehlgeschlagen: {e}")),
+            }
         }
+        let attributable = receipt
+            .attributable_mib()
+            .map_err(|e| format!("0-MiB-Ableitung verweigert: {e}"))?;
+        debug_assert_eq!(attributable, 0);
         Ok(())
     }
 
@@ -1978,4 +2083,33 @@ pub fn run() {
 
 fn main() {
     run();
+}
+
+#[cfg(test)]
+mod silence_wav_tests {
+    use super::silence_wav_bytes;
+    use sha2::{Digest, Sha256};
+
+    /// Hashbindung (Spec B5.5): Der Silence-Smoke ist fest eingebaut und sein
+    /// SHA-256 wird hier referenzgebunden geprüft — eine versehentliche Änderung
+    /// des Smoke-Audio (Länge/Format) bricht den Test sofort. Referenzwert wurde
+    /// gegen die Python-Erzeugung (16 kHz mono 16-bit, 0,5 s Stille) abgeglichen.
+    #[test]
+    fn silence_wav_hash_gebunden() {
+        let wav = silence_wav_bytes();
+        // Struktur-Sanity: RIFF-Header + exakt 44 Header-Bytes + 16000 Datenbytes.
+        assert_eq!(wav.len(), 44 + 16_000, "WAV-Gesamtgröße");
+        assert_eq!(&wav[0..4], b"RIFF", "RIFF-Magic");
+        assert_eq!(&wav[8..12], b"WAVE", "WAVE-Formate");
+
+        let mut h = Sha256::new();
+        h.update(&wav);
+        let digest = h.finalize();
+        // Manueller Hex (kein hex-Crate nötig) — Referenz aus der Python-Erzeugung.
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex, "358c6dcef4442790decb0a5c03fb320154f9d1dd5b4618e301f9e6661a413cb5",
+            "Silence-WAV-Hash hat sich geändert — Smoke-Audio bewusst anpassen + Referenz aktualisieren"
+        );
+    }
 }

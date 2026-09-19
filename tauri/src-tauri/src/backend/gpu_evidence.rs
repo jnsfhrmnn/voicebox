@@ -139,6 +139,18 @@ impl GpuReceipt {
         }
     }
 
+    /// Receipt für eine explizite PID-Menge eröffnen — z. B. nur der bekannte
+    /// jf-whisper-CUDA-PID (B6: „keinen aufgezeichneten jf-whisper-CUDA-PID").
+    /// Unbeachtete fremde Compute-Prozesse dürfen die Freigabe nicht rot machen.
+    pub fn for_pids(pids: impl IntoIterator<Item = u32>) -> Self {
+        Self {
+            recorded_pids: pids.into_iter().collect(),
+            green_streak: 0,
+            last_probe_at: None,
+            closed: false,
+        }
+    }
+
     /// Aufgezeichnete PIDs (Kopie) — für Logs und das Operationsjournal.
     pub fn recorded_pids(&self) -> &[u32] {
         &self.recorded_pids

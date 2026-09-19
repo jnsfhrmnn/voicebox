@@ -48,6 +48,14 @@ pub enum SwitchOutcome {
 /// `Err` bei jedem Schrittfehler. Nach einem Fehler **nach** Zielstart wird das
 /// Ziel beendet (`teardown_target`) — B5.8/B6.8. Der Actor erfährt den terminalen
 /// Zustand ausschließlich über `on_drained` / `on_target_ready` / `on_failed`.
+///
+/// Beide Richtungen beenden den Ausgangs-Prozess **vor** dem Zielstart:
+/// `ServerState` hält genau eine Live-Instanz (PID/Port/Job-Slot), und B6.8
+/// verbietet einen CUDA-Rollback („wird CUDA trotzdem beendet") — ein
+/// Coexistence-Fenster (B6 Schritt 2 vor 4) bräuchte Dual-Instance-Tracking, das
+/// erst mit der Warm-Standby-Architektur (Decision Log 2026-09-09) folgt. Die
+/// Garantien bleiben identisch: Admission geschlossen, kein stiller Fallback,
+/// VRAM-Nachweis nach dem Prozessende, NoBackendReady bei Ziel-Fehler.
 #[allow(dead_code)] // JFW-12 Block (g): main.rs-Wiring folgt (Zielsystem-Seam)
 pub fn run_switch(
     _ctx: &SwitchContext,
@@ -78,12 +86,13 @@ pub fn run_switch(
         Err(e) => return fail_closed(&on_failed, format!("Zielstart fehlgeschlagen: {e}")),
     };
 
-    // 4) Readiness-Smoke (B5.6 / B6.2): `/health` grün + Vertrag geprüft.
+    // 4) Readiness-Smoke (B5.5/B6.2): echte Inferenz + Modell-/Variant-Vertrag.
     if let Err(e) = readiness_smoke(&instance) {
         return fail_after_start(&on_failed, &teardown_target, &instance, format!("Readiness fehlgeschlagen: {e}"));
     }
 
-    // 5) VRAM-Evidence (B6.6–7): nur CudaToCpu — NVML doppelte negative Probe.
+    // 5) VRAM-Evidence (B6.6–7): nur CudaToCpu — NVML doppelte negative Probe,
+    //    **nach** dem CUDA-Prozessende (Schritt 2).
     if let Some(ev) = &vram_evidence {
         if let Err(e) = ev(&instance) {
             return fail_after_start(
