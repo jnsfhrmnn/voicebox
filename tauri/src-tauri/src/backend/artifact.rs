@@ -35,7 +35,10 @@ pub const MAX_UNPACKED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub const MAX_ARCHIVE_BYTES: u64 = 3 * 1024 * 1024 * 1024;
 
 /// Eingebetteter jf-whisper-Releasepfad (B9): die UI akzeptiert keine freie URL.
-const RELEASE_BASE: &str = "https://releases.jfwhisper.local/jfw/cuda";
+/// Maschinenlokaler Pfad: lokaler HTTPS-Server auf :443 mit intern signierter CA
+/// (CurrentUser\Root, kein Admin nötig). Für einen zentralen Release-Host wird
+/// hier nur der Hostname ausgetauscht.
+const RELEASE_BASE: &str = "https://localhost/jfw/cuda";
 
 /// Download-Timeout pro Verbindung (B9: nur die ausdrücklich gestartete
 /// Artefaktoperation darf Netzwerkverkehr erzeugen).
@@ -974,6 +977,43 @@ mod tests {
         eprintln!(
             "E2E OK: reales Release {} verifiziert (Manifest + Kontrakt + Archiv) gegen eingebetteten Key",
             manifest.build_id
+        );
+    }
+
+    /// JFW-12 P2: install_release() gegen den LIVE Release-Pfad — vollständige
+    /// Pipeline über HTTPS mit System-Trust (CA in CurrentUser\Root, kein
+    /// --cacert/CA-Bundle): Download von Manifest + Signatur + Archiv (2,8 GB)
+    /// → Minisign-Verifikation per eingebettetem Key → Extraktion → Commit.
+    /// Läuft nur mit `JFW_LIVE_E2E=1` (Server muss auf :443 laufen); sonst skip.
+    #[test]
+    fn e2e_live_install_release_against_local_server() {
+        if std::env::var("JFW_LIVE_E2E").is_err() {
+            eprintln!("SKIP: JFW_LIVE_E2E nicht gesetzt (Live-Server auf :443 erforderlich)");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        // Manager ohne Test-Key → eingebetteter Public Key (Produktionspfad).
+        let manager = Manager::new(
+            tmp.path().to_path_buf(),
+            "0.5.0".into(),
+            env!("JFW_BUILD_ID").to_string(),
+        );
+
+        let installed = manager
+            .install_release(|phase| eprintln!("[live-e2e] {phase}"))
+            .expect("Live-Installations-Pipeline muss grünes Commit liefern");
+        assert_eq!(installed.build_id, env!("JFW_BUILD_ID"));
+
+        // Current-Pointer atomar gesetzt.
+        let current = manager.current().unwrap().unwrap();
+        assert_eq!(current.build_id, installed.build_id);
+
+        // Build-Verzeichnis existiert mit versioniertem Manifest.
+        let target = tmp.path().join("cuda").join(&installed.build_id);
+        assert!(target.join("manifest.json").exists());
+        eprintln!(
+            "LIVE E2E OK: install_release() hat {} über https://localhost/jfw/cuda/0.5.0/ installiert",
+            installed.build_id
         );
     }
 
