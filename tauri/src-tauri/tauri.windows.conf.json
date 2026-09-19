@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/jf-whisper-server-x86_64-pc-windows-msvc": "./jf-whisper-server"
+    }
+  }
+}

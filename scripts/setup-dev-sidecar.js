@@ -11,7 +11,7 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, statSync, writeFileSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -371,10 +371,52 @@ exit 1
 // a new sidecar is introduced.
 const SIDECAR_BASE_NAMES = ['jf-whisper-server'];
 
+/**
+ * JFW-12 P3: The CPU sidecar ships as an onedir tree (folder + exe inside),
+ * bundled via tauri.windows.conf.json's ``bundle.resources``. That resource
+ * walk fails hard when the folder is missing — so, like the single-file
+ * placeholder above, we create a minimal onedir placeholder structure when
+ * no real build exists yet. A real build (build_binary.py) overwrites it.
+ */
+function ensureOnedirPlaceholder(targetTriple, baseName) {
+  const isWindows = targetTriple.includes('windows');
+  const folderName = `${baseName}-${targetTriple}`;
+  const folderPath = join(BINARIES_DIR, folderName);
+  const exeName = isWindows ? `${baseName}.exe` : baseName;
+  const exePath = join(folderPath, exeName);
+
+  // Real onedir build present (exe larger than our placeholder)? Leave it.
+  if (existsSync(exePath)) {
+    try {
+      const stats = statSync(exePath);
+      if (stats.size > MIN_REAL_BINARY_SIZE) {
+        console.log(`Real onedir sidecar already exists: ${folderName}/ (${(stats.size / 1024 / 1024).toFixed(1)} MB exe)`);
+        return;
+      }
+    } catch {}
+  }
+
+  if (!existsSync(folderPath)) {
+    mkdirSync(folderPath, { recursive: true });
+  }
+  // Reuse the same minimal-PE placeholder as the single-file case.
+  const placeholderName = `${baseName}-${targetTriple}${isWindows ? '.exe' : ''}`;
+  const placeholderPath = join(BINARIES_DIR, placeholderName);
+  if (existsSync(placeholderPath)) {
+    // Copy the existing placeholder content into the onedir layout.
+    writeFileSync(exePath, readFileSync(placeholderPath));
+  } else {
+    createPlaceholderBinary(targetTriple, baseName);
+    writeFileSync(exePath, readFileSync(placeholderPath));
+  }
+  console.log(`Created onedir dev placeholder: ${folderName}/${exeName}`);
+}
+
 function main() {
   const targetTriple = getTargetTriple();
   for (const baseName of SIDECAR_BASE_NAMES) {
     createPlaceholderBinary(targetTriple, baseName);
+    ensureOnedirPlaceholder(targetTriple, baseName);
   }
 }
 

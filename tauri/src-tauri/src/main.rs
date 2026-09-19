@@ -212,6 +212,19 @@ fn resolve_sidecar_path() -> std::path::PathBuf {
     const BASE: &str = "jf-whisper-server";
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
+            // JFW-12 P3: onedir-Layout bevorzugen — der CPU-Sidecar liegt als Ordner
+            // <exe_dir>/jf-whisper-server/ mit dem Exe darin (kein Self-Unpack, Start
+            // ~4,6 s statt ~18,4 s). Das Exe wird aus dem Ordner gestartet; cwd muss
+            // dann auf den Ordner zeigen (siehe Spawn-Stellen), damit _internal/ gefunden wird.
+            let onedir_exe = if cfg!(windows) {
+                parent.join(BASE).join(format!("{BASE}.exe"))
+            } else {
+                parent.join(BASE).join(BASE)
+            };
+            if onedir_exe.exists() {
+                return onedir_exe;
+            }
+            // Fallback: altes onefile-Einzel-Exe neben dem App-Exe.
             let candidate = if cfg!(windows) {
                 parent.join(format!("{BASE}.exe"))
             } else {
@@ -464,9 +477,9 @@ async fn start_server(
         use tauri_plugin_shell::process::CommandEvent;
 
         let exe_path = cuda_binary.clone().unwrap_or_else(|| sidecar_exe.clone());
-        // PyInstaller onedir erwartet DLLs relativ zum Exe → cwd = Exe-Verzeichnis.
-        let cwd: Option<std::path::PathBuf> =
-            cuda_binary.as_ref().and_then(|c| c.parent()).map(std::path::PathBuf::from);
+        // PyInstaller onedir erwartet DLLs/_internal relativ zum Exe → cwd = Exe-Verzeichnis.
+        // Gilt fuer beide Varianten (CUDA-Build-Ordner / CPU-onedir-Ordner).
+        let cwd: Option<std::path::PathBuf> = exe_path.parent().map(std::path::PathBuf::from);
 
         let args: Vec<String> = vec![
             "--data-dir".to_string(),
@@ -925,7 +938,13 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         //    CUDA: installierter Build über den Current-Pointer (B9).
         let data_dir = jfwhisper_data_root();
         let (exe_path, cwd): (std::path::PathBuf, Option<std::path::PathBuf>) = match variant {
-            BackendVariant::Cpu => (resolve_sidecar_path(), None),
+            BackendVariant::Cpu => {
+                // JFW-12 P3: onedir erwartet cwd = Exe-Verzeichnis, damit _internal/
+                // gefunden wird. Für das onefile-Fallback ist cwd harmlos (Self-Unpack).
+                let exe = resolve_sidecar_path();
+                let cwd = exe.parent().map(|p| p.to_path_buf());
+                (exe, cwd)
+            }
             BackendVariant::Cuda => {
                 #[cfg(not(windows))]
                 return Err("CUDA-Switch erfordert Windows (B8: Job-Objects)".into());
