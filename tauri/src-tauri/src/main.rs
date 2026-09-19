@@ -2085,6 +2085,7 @@ fn main() {
     run();
 }
 
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/bench_module.rs"));
 #[cfg(test)]
 mod silence_wav_tests {
     use super::silence_wav_bytes;
