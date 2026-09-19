@@ -39,12 +39,12 @@ def build_server(cuda=False):
     binary_name = "jf-whisper-server-cuda" if cuda else "jf-whisper-server"
 
     # PyInstaller arguments
-    # CUDA builds use --onedir so we can split the output into two archives:
-    #   1. Server core (~200-400MB) — versioned with the app
-    #   2. CUDA libs (~2GB) — versioned independently (only redownloaded on
-    #      CUDA toolkit / torch major version changes)
-    # CPU builds remain --onefile for simplicity.
-    pack_mode = "--onedir" if cuda else "--onefile"
+    # Beide Varianten nutzen --onedir (JFW-12 P3): onefile entpackt sich bei JEDEM
+    # Start selbst (~18 s Self-Unpack gemessen im 30x-Benchmark) — das war die
+    # dominante Kostenstelle des CUDA->CPU-Wechsels. onedir startet direkt aus dem
+    # Installationsordner; der Tauri-Bundler legt den Ordner als Resource ab und
+    # loest das Exe beim Boot auf (resolve_sidecar_path).
+    pack_mode = "--onedir"
     args = [
         "server.py",  # Use server.py as entry point instead of main.py
         pack_mode,

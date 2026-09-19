@@ -39,7 +39,9 @@ mod switch_bench {
         data_root: &Path,
     ) -> Result<(), String> {
         let (exe_owned, cwd_owned): (PathBuf, Option<PathBuf>) = match variant {
-            BackendVariant::Cpu => (cpu_exe.to_path_buf(), None),
+            // CPU-Build ist onedir (JFW-12 P3): Exe + _internal/ im selben Ordner;
+            // cwd auf den Installationsordner setzen wie beim CUDA-Pfad.
+            BackendVariant::Cpu => (cpu_exe.to_path_buf(), cpu_exe.parent().map(|p| p.to_path_buf())),
             BackendVariant::Cuda => (cuda_dir.join("jf-whisper-server-cuda.exe"), Some(cuda_dir.to_path_buf())),
         };
         if !exe_owned.exists() {
@@ -375,11 +377,16 @@ mod switch_bench {
         }
         let data_root = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into())).join("JFWhisper-bench");
         std::fs::create_dir_all(&data_root).unwrap();
-        let cpu_exe = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("binaries")
-            .join(if cfg!(windows) { "jf-whisper-server-x86_64-pc-windows-msvc.exe" } else { "jf-whisper-server" });
+        // CPU-Sidecar auflösen: onedir-Layout (Ordner + Exe darin) bevorzugen,
+        // Fallback auf das alte onefile-Einzel-Exe. JFW-12 P3: onedir spart den
+        // ~18-s-Self-Unpack; die Messung muss exakt das messen, was gebaut wurde.
+        let bin_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        let triple_dir = if cfg!(windows) { "jf-whisper-server-x86_64-pc-windows-msvc" } else { "jf-whisper-server" };
+        let onedir_exe = bin_root.join(triple_dir).join(if cfg!(windows) { "jf-whisper-server.exe" } else { "jf-whisper-server" });
+        let onefile_exe = bin_root.join(if cfg!(windows) { format!("{triple_dir}.exe") } else { triple_dir.to_string() });
+        let cpu_exe = if onedir_exe.exists() { onedir_exe.clone() } else { onefile_exe.clone() };
         if !cpu_exe.exists() {
-            panic!("CPU-Sidecar fehlt: {}", cpu_exe.display());
+            panic!("CPU-Sidecar fehlt (onedir: {} / onefile: {})", onedir_exe.display(), onefile_exe.display());
         }
 
         // Installierten CUDA-Build auflösen; bei Bedarf per install_release() nachinstallieren.
