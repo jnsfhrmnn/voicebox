@@ -111,7 +111,26 @@ impl Supervisor {
         switch_steps: Option<Arc<dyn crate::backend::switch_driver::SwitchStepFactory>>,
     ) -> Self {
         let app_epoch = new_app_epoch();
-        let state = Arc::new(Mutex::new(BackendSupervisorState::new(app_epoch.clone())));
+        // JFW-12: Ein Neustart darf ein installiertes + verifiziertes CUDA-Build
+        // nicht vergessen. Der Initialzustand ist fail-closed NotInstalled; hier
+        // wird die Phase aus dem atomaren Current-Pointer wiederhergestellt, wenn
+        // der Build tatsächlich auf der Platte liegt (current.json wird nur nach
+        // vollständigem Commit geschrieben). Ohne diesen Schritt zeigt die UI nach
+        // jedem Neustart „nicht installiert" und decide_switch lehnt CpuToCuda ab —
+        // obwohl das Artefakt vorhanden ist (B9).
+        let mut state_inner = BackendSupervisorState::new(app_epoch.clone());
+        if let Ok(Some(ptr)) = manager.current() {
+            let exe_name = if cfg!(windows) {
+                "jf-whisper-server-cuda.exe"
+            } else {
+                "jf-whisper-server-cuda"
+            };
+            let exe_path = manager.base_dir.join("cuda").join(&ptr.build_id).join(exe_name);
+            if exe_path.exists() {
+                state_inner.artifact = ArtifactPhase::Installed;
+            }
+        }
+        let state = Arc::new(Mutex::new(state_inner));
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Command>(MAILBOX_CAPACITY);
 
         let actor_state = Arc::clone(&state);
@@ -163,10 +182,17 @@ impl Supervisor {
                                 model_contract_hash: model_contract_hash(variant),
                                 sidecar_instance_id: format!("{}-{}", instance.pid, instance.creation_time_ms),
                             };
-                            let to = RuntimePhase::CpuReady(gen);
+                            // JFW-12 Bugfix: Das Boot kann in CPU oder CUDA starten
+                            // (main.rs wählt die Binary über den Current-Pointer). Die
+                            // Ready-Phase muss zur Variante passen — sonst meldet die UI
+                            // nach einem CUDA-Boot fälschlich "cpu".
+                            let to = match variant {
+                                BackendVariant::Cuda => RuntimePhase::CudaReady(gen),
+                                BackendVariant::Cpu => RuntimePhase::CpuReady(gen),
+                            };
                             if !runtime_transition(&st.runtime, &to) {
                                 eprintln!(
-                                    "supervisor: abgelehnte Transition {:?} -> CpuReady({gen})",
+                                    "supervisor: abgelehnte Transition {:?} -> Ready({gen})",
                                     st.runtime
                                 );
                                 return;

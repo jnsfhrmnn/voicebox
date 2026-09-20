@@ -286,7 +286,7 @@ pub struct SupervisorSnapshot {
 pub fn runtime_transition(from: &RuntimePhase, to: &RuntimePhase) -> bool {
     use RuntimePhase::*;
     match from {
-        BootingCpu => matches!(to, CpuReady(_) | NoBackendReady(_)),
+        BootingCpu => matches!(to, CpuReady(_) | CudaReady(_) | NoBackendReady(_)),
         CpuReady(_) => matches!(to, DrainingCpu(_) | StoppingCuda(_)),
         DrainingCpu(ref op) => {
             // CUDA-Pfad (Block d) oder Fehlerfall zurück auf CPU.

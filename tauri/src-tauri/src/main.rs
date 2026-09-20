@@ -597,16 +597,33 @@ async fn start_server(
                             if v.get("jfwhisper_ready").and_then(|b| b.as_bool()) == Some(true) {
                                 let port = v.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
                                 *state.sidecar_port.lock().unwrap() = Some(port);
-                                println!("Server is ready! (Handshake: port={}, generation={})",
-                                    port, v.get("generation").map(|g| g.to_string()).unwrap_or_default());
+                                // JFW-12 Bugfix: Die Variante kommt aus dem Handshake
+                                // (server.py meldet "variant": cpu|cuda). Ein Boot direkt in
+                                // CUDA (Current-Pointer) wurde hier hart als CPU gemeldet —
+                                // die UI zeigte dann "cpu", obwohl der CUDA-Build lief.
+                                let variant = match v.get("variant").and_then(|s| s.as_str()) {
+                                    Some("cuda") => BackendVariant::Cuda,
+                                    _ => BackendVariant::Cpu,
+                                };
+                                println!("Server is ready! (Handshake: port={}, generation={}, variant={:?})",
+                                    port, v.get("generation").map(|g| g.to_string()).unwrap_or_default(), variant);
                                 // JFW-12 B3/B8: Prozessidentität binden — PID + Erzeugungszeit
                                 // + normalisierter Executable-Pfad; Lease aktiviert Admission.
+                                let (identity_path, identity_build_id) = match &cuda_binary {
+                                    Some(p) => (
+                                        p.clone(),
+                                        p.parent()
+                                            .and_then(|d| d.file_name())
+                                            .map(|n| n.to_string_lossy().into_owned()),
+                                    ),
+                                    None => (sidecar_exe.clone(), None),
+                                };
                                 supervisor.mark_cpu_ready(SidecarInstance::new(
                                     process_pid,
-                                    resolve_sidecar_path().to_string_lossy().into_owned(),
-                                    BackendVariant::Cpu,
+                                    identity_path.to_string_lossy().into_owned(),
+                                    variant,
                                     port,
-                                    String::new(),
+                                    identity_build_id.unwrap_or_default(),
                                 ));
                                 break;
                             }
