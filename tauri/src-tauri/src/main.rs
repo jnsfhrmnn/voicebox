@@ -1842,6 +1842,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        // JFW-12 P3+: Globaler CPU/GPU-Switch-Hotkey. Die konkrete Belegung
+        // kommt zur Laufzeit aus dem Frontend (frei in der UI änderbar) — hier
+        // wird nur der Manager gestartet, keine Taste ist hardcoded.
+        .plugin(tauri_plugin_global_shortcut::Builder::<tauri::Wry>::default().build())
         .manage(ServerState {
             #[cfg(windows)]
             sidecar_job: Mutex::new(None),

@@ -14,6 +14,9 @@
     "dialog:default",
     "dialog:allow-save",
     "dialog:allow-open",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered",
     "fs:default",
     {
       "identifier": "fs:allow-write-file",

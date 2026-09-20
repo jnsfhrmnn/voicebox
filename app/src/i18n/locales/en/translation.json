@@ -15,7 +15,9 @@
     "captures": "Captures",
     "models": "Models",
     "settings": "Settings",
-    "updateBadge": "Update"
+    "updateBadge": "Update",
+    "backendGpuTitle": "GPU mode (CUDA) active — click to switch back in Settings → GPU",
+    "backendCpuTitle": "CPU mode active"
   },
   "captures": {
     "title": "Captures",
@@ -1138,6 +1140,13 @@
           "generation": "Generation",
           "result": "Result",
           "none": "No switch has been performed yet."
+        },
+        "hotkey": {
+          "label": "Global hotkey:",
+          "invalid": "Invalid key combination",
+          "change": "Change…",
+          "pickerTitle": "Set global switch hotkey",
+          "pickerDescription": "Press the new key combination. It works system-wide, even when Voicebox is in the background."
         }
       }
     },

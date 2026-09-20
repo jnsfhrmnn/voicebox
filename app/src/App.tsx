@@ -11,6 +11,8 @@ import { TOP_SAFE_AREA_PADDING } from '@/lib/constants/ui';
 import { cn } from '@/lib/utils/cn';
 import { usePlatform } from '@/platform/PlatformContext';
 import { router } from '@/router';
+import { useBackendModeMarker } from '@/features/backend/useBackendModeMarker';
+import { useBackendSwitchHotkey } from '@/features/backend/useBackendSwitchHotkey';
 import { useLogStore } from '@/stores/logStore';
 import {
   getDefaultServerUrl,
@@ -55,6 +57,12 @@ function MainApp() {
 
   // Automatically check for app updates on startup and show toast notifications
   useAutoUpdater({ checkOnMount: true, showToast: true });
+
+  // JFW-12 P3+: Backend-Farbsignal (CUDA = rot) + globaler Switch-Hotkey.
+  // Der Marker gilt für beide Webviews; der Hotkey wird nur im Hauptfenster
+  // registriert (einmalig).
+  useBackendModeMarker();
+  useBackendSwitchHotkey();
 
   // Replay the saved chord into the Rust hotkey listener every time
   // capture_settings resolves or the user edits the chord.

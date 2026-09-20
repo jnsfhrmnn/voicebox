@@ -15,7 +15,9 @@
     "captures": "擷取",
     "models": "模型",
     "settings": "設定",
-    "updateBadge": "更新"
+    "updateBadge": "更新",
+    "backendGpuTitle": "GPU 模式（CUDA）已啟用 — 可於設定 → GPU 中切換",
+    "backendCpuTitle": "CPU 模式已啟用"
   },
   "captures": {
     "title": "擷取",
@@ -1138,6 +1140,13 @@
           "generation": "代数",
           "result": "結果",
           "none": "尚未進行切換。"
+        },
+        "hotkey": {
+          "label": "全域快捷鍵：",
+          "invalid": "無效的按鍵組合",
+          "change": "變更…",
+          "pickerTitle": "設定全域切換快捷鍵",
+          "pickerDescription": "按下新的按鍵組合。即使 Voicebox 在背景，它也會在全系統範圍內生效。"
         }
       }
     },

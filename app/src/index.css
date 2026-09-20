@@ -157,6 +157,20 @@
   opacity: 0;
 }
 
+/* JFW-12 P3+: Backend-Farbsignal — CUDA = rot, CPU bleibt gelb-orange.
+   Der Marker `data-backend` wird von useBackendModeMarker() am Dokument-Root
+   gesetzt (Hauptfenster UND Diktat-Overlay). Damit wechseln automatisch alle
+   Akzent- und Primärflächen (Pill, Buttons, Highlights) mit dem Modus. */
+html[data-backend='cuda'] {
+  --accent: 0 72% 51%;
+  --primary: 0 72% 51%;
+}
+
+html[data-backend='cuda'].dark {
+  --accent: 0 84% 65%;
+  --primary: 0 84% 65%;
+}
+
 .dark .sidebar-logo {
   filter: drop-shadow(0 0 6px hsl(var(--accent) / 0.5))
     drop-shadow(0 0 14px hsl(var(--accent) / 0.35)) drop-shadow(0 0 28px hsl(var(--accent) / 0.2));

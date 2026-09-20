@@ -15,7 +15,9 @@
     "captures": "キャプチャ",
     "models": "モデル",
     "settings": "設定",
-    "updateBadge": "更新"
+    "updateBadge": "更新",
+    "backendGpuTitle": "GPUモード（CUDA）有効 — 設定→GPUで切替可能",
+    "backendCpuTitle": "CPUモード有効"
   },
   "captures": {
     "title": "キャプチャ",
@@ -1138,6 +1140,13 @@
           "generation": "世代",
           "result": "結果",
           "none": "まだ切り替えは実行されていません。"
+        },
+        "hotkey": {
+          "label": "グローバルホットキー:",
+          "invalid": "無効なキー組み合わせ",
+          "change": "変更…",
+          "pickerTitle": "グローバル切替ホットキーを設定",
+          "pickerDescription": "新しいキー組み合わせを押してください。Voiceboxが背景にあってもシステム全体で動作します。"
         }
       }
     },

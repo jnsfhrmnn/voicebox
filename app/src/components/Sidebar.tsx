@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils/cn';
 import { usePlatform } from '@/platform/PlatformContext';
 import type { UpdateStatus } from '@/platform/types';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useSupervisor } from '@/features/backend/useSupervisor';
 import { version } from '../../package.json';
 
 interface SidebarProps {
@@ -31,6 +32,9 @@ export function Sidebar({ isMacOS }: SidebarProps) {
   const matchRoute = useMatchRoute();
   const isPlayerOpen = !!usePlayerStore((s) => s.audioUrl);
   const platform = usePlatform();
+  // JFW-12 P3+: permanentes CPU/GPU-Badge — immer sichtbar, egal wo man ist.
+  const { snapshot } = useSupervisor();
+  const isCuda = snapshot?.active_variant === 'cuda';
 
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(platform.updater.getStatus());
   useEffect(() => platform.updater.subscribe(setUpdateStatus), [platform.updater]);
@@ -86,6 +90,19 @@ export function Sidebar({ isMacOS }: SidebarProps) {
             </Link>
           );
         })}
+      </div>
+
+      {/* JFW-12 P3+: permanentes Backend-Badge — GPU rot / CPU gelb-orange */}
+      <div
+        className={cn(
+          'flex h-7 w-10 items-center justify-center rounded-md border text-[10px] font-bold tracking-wide transition-colors',
+          isCuda
+            ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
+            : 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+        )}
+        title={isCuda ? t('nav.backendGpuTitle') : t('nav.backendCpuTitle')}
+      >
+        {isCuda ? 'GPU' : 'CPU'}
       </div>
 
       {/* Version */}

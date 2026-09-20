@@ -1,12 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { Cpu, Loader2, ShieldCheck, Wrench, Trash2, RefreshCw } from 'lucide-react';
+import { Cpu, Loader2, ShieldCheck, Wrench, Trash2, RefreshCw, Keyboard } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { HealthResponse } from '@/lib/api/types';
 import { apiClient } from '@/lib/api/client';
 import { useServerHealth } from '@/lib/hooks/useServer';
 import { Button } from '@/components/ui/button';
+import { ChordPicker } from '@/components/ChordPicker/ChordPicker';
 import { cn } from '@/lib/utils/cn';
+import { displayLabelForKey, modifierSideHint, sortChordKeys } from '@/lib/utils/keyCodes';
 import { useSupervisor } from '@/features/backend/useSupervisor';
+import { chordToAccelerator } from '@/features/backend/useBackendSwitchHotkey';
+import { useBackendSwitchHotkeyStore } from '@/features/backend/useBackendSwitchHotkeyStore';
 
 /**
  * jf-whisper-Profil: GPU-/Backend-Verwaltung (JFW-12 Block f, Spec A).
@@ -174,6 +179,66 @@ function SwitchProgress({ phase, operationKind }: { phase: string; operationKind
   );
 }
 
+/** JFW-12 P3+: Zeile für den globalen CPU/GPU-Switch-Hotkey. */
+function GlobalHotkeyRow() {
+  const { t } = useTranslation();
+  const chord = useBackendSwitchHotkeyStore((s) => s.chord);
+  const setChord = useBackendSwitchHotkeyStore((s) => s.setChord);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const keys = sortChordKeys(chord);
+  const accelerator = chordToAccelerator(keys);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      <span className="text-xs text-muted-foreground">{t('settings.gpu.backend.hotkey.label')}</span>
+      {accelerator ? (
+        <span className="flex items-center gap-1">
+          {keys.map((k) => (
+            <HotkeyKey name={k} key={k} />
+          ))}
+        </span>
+      ) : (
+        <span className="text-xs text-destructive">{t('settings.gpu.backend.hotkey.invalid')}</span>
+      )}
+      <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>
+        <Keyboard className="mr-1 h-3.5 w-3.5" />
+        {t('settings.gpu.backend.hotkey.change')}
+      </Button>
+      <ChordPicker
+        open={pickerOpen}
+        title={t('settings.gpu.backend.hotkey.pickerTitle')}
+        description={t('settings.gpu.backend.hotkey.pickerDescription')}
+        initialKeys={keys}
+        onSave={(next) => {
+          setChord(next);
+          setPickerOpen(false);
+        }}
+        onCancel={() => setPickerOpen(false)}
+      />
+    </div>
+  );
+}
+
+function HotkeyKey({ name }: { name: string }) {
+  const side = modifierSideHint(name);
+  return (
+    <span
+      className={cn(
+        'relative inline-flex items-center justify-center h-7 min-w-[1.75rem] px-1.5',
+        'rounded-md border border-border bg-background font-mono text-xs font-medium shadow-sm',
+      )}
+    >
+      {displayLabelForKey(name)}
+      {side ? (
+        <span className="absolute -top-1 -right-1 h-3 min-w-[0.75rem] px-0.5 rounded-sm bg-accent text-[8px] font-bold leading-none flex items-center justify-center text-accent-foreground">
+          {side}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function GpuPage() {
   const { t } = useTranslation();
   const { data: health } = useServerHealth();
@@ -247,6 +312,9 @@ export function GpuPage() {
             {t('settings.gpu.backend.switch.toCpu')}
           </Button>
         </div>
+
+        {/* JFW-12 P3+: Globaler Switch-Hotkey — frei in der UI belegbar. */}
+        <GlobalHotkeyRow />
       </Section>
 
       {/* 2. Laufende Arbeit */}

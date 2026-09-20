@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useEffect, useRef } from 'react';
 import { CapturePill } from '@/components/CapturePill/CapturePill';
+import { useBackendModeMarker } from '@/features/backend/useBackendModeMarker';
 import type { FocusSnapshot } from '@/lib/api/types';
 import { useCaptureRecordingSession } from '@/lib/hooks/useCaptureRecordingSession';
 
@@ -15,6 +16,10 @@ import { useCaptureRecordingSession } from '@/lib/hooks/useCaptureRecordingSessi
  * cycle is a TTS feature and is excluded from the jf-whisper profile.)
  */
 export function DictateWindow() {
+  // JFW-12 P3+: Backend-Farbsignal — die Pill wechselt mit CUDA auf Rot,
+  // unabhängig davon, wo das Overlay gerade schwebt.
+  useBackendModeMarker();
+
   // Force the host document chrome to be transparent so the Tauri window
   // takes on the pill's own shape.
   useEffect(() => {

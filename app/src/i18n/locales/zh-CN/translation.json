@@ -15,7 +15,9 @@
     "captures": "捕获",
     "models": "模型",
     "settings": "设置",
-    "updateBadge": "更新"
+    "updateBadge": "更新",
+    "backendGpuTitle": "GPU 模式（CUDA）已激活 — 可在设置 → GPU 中切换",
+    "backendCpuTitle": "CPU 模式已激活"
   },
   "captures": {
     "title": "捕获",
@@ -1138,6 +1140,13 @@
           "generation": "代数",
           "result": "结果",
           "none": "尚未进行切换。"
+        },
+        "hotkey": {
+          "label": "全局快捷键：",
+          "invalid": "无效的按键组合",
+          "change": "更改…",
+          "pickerTitle": "设置全局切换快捷键",
+          "pickerDescription": "按下新的按键组合。即使 Voicebox 在后台，它也会在全系统范围内生效。"
         }
       }
     },
