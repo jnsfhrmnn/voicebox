@@ -921,9 +921,15 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                 let _ = client.post(format!("http://127.0.0.1:{port}/shutdown")).send();
             }
 
-            // Kurzes Graceful-Fenster (max. 5 s).
+            // Kurzes Graceful-Shutdown-Fenster (Spec JFW-12 Zeile 404: „kurzes
+            // authentifiziertes Graceful-Shutdown-Fenster, danach nötigenfalls der
+            // gesamte Job-Object-Baum"). 1 s genügt für den kontrollierten Exit;
+            // gemessener natürlicher Exit des Sidecars unter App-Last waren 3,2 s
+            // (Journal backend_end 4416 ms) und damit die Budget-Überschreitung.
+            // Danach beendet der vertragliche Job-Close (B8) den Baum; das Ende wird
+            // unmittelbar danach bestätigt (B5).
             {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
                 while is_process_alive(pid) && std::time::Instant::now() < deadline {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }

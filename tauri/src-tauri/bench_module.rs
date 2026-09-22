@@ -109,7 +109,10 @@ mod switch_bench {
             {
                 let _ = client.post(format!("http://127.0.0.1:{}/shutdown", live.port)).send();
             }
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            // Kurzes Graceful-Fenster identisch zur Produktion (main.rs,
+            // teardown_source): 1 s — Maßnahmen-Parität, damit der 30x-Bench das
+            // Idle-Budget mit demselben Verhalten misst wie der Produkt-Pfad.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
             while super::is_process_alive(live.pid) && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
