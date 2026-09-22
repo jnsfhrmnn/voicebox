@@ -262,6 +262,10 @@ impl BackendSupervisorState {
             artifact_error: self.artifact_error.clone(),
             operation_id: self.operation.as_ref().map(|o| o.operation_id.clone()),
             operation_kind: self.operation.as_ref().map(|o| o.kind.as_str()),
+            runtime_reason: match &self.runtime {
+                RuntimePhase::NoBackendReady(r) if !r.is_empty() => Some(r.clone()),
+                _ => None,
+            },
         }
     }
 }
@@ -279,6 +283,10 @@ pub struct SupervisorSnapshot {
     pub artifact_error: Option<String>,
     pub operation_id: Option<String>,
     pub operation_kind: Option<&'static str>,
+    /// Letzter Boot-/Laufzeit-Fehlergrund (inhaltsfrei), z. B. `spawn_fehler`,
+    /// `boot_timeout`; `None`, sobald ein Backend Ready ist. Stabiler Vertrag
+    /// für die UI — `artifact_error` bleibt addon-spezifisch (siehe oben).
+    pub runtime_reason: Option<String>,
 }
 
 /// Transition-Regelwerk des Runtime-Automaten (B2). Der Actor ruft dies vor

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod switch_bench {
     //! JFW-12 P3: 30×-Idle-Switch-Benchmark auf realer Hardware (Spec B5/B6,
-    //! Abnahme-Zeilen 119/122). Treibt dieselbe Orchestrierung wie die Produktion
+    //! Abnahme-Zeilen 121/124). Treibt dieselbe Orchestrierung wie die Produktion
     //! (`switch_driver::run_switch`) mit echten Prozessschritten: `spawn_sidecar` +
     //! Job-Object, Ready-Handshake, Silence-WAV-Inferenz-Smoke, NVML-VRAM-Evidence.
     //! Läuft nur mit `JFW_SWITCH_BENCH=1`; sonst skip (CI bleibt grün).
@@ -112,7 +112,7 @@ mod switch_bench {
             // Kurzes Graceful-Fenster identisch zur Produktion (main.rs,
             // teardown_source): 1 s — Maßnahmen-Parität, damit der 30x-Bench das
             // Idle-Budget mit demselben Verhalten misst wie der Produkt-Pfad.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            let deadline = std::time::Instant::now() + super::GRACEFUL_SHUTDOWN_WINDOW;
             while super::is_process_alive(live.pid) && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -435,7 +435,7 @@ mod switch_bench {
             "cuda2cpu" => vec![(SwitchDirection::CudaToCpu, 13_500)],
             _ => vec![
                 (SwitchDirection::CpuToCuda, 15_000),
-                // CudaToCpu: 13,5 s (Spec AC Zeile 122, Kalibrierung JFW-12 P3
+                // CudaToCpu: 13,5 s (Spec AC Zeile 124, Kalibrierung JFW-12 P3
                 // 2026-09-19 mit onedir-CPU-Sidecar; die alte 10-s-Zahl war eine
                 // onefile-Annahme und ist gegen die kalibrierte Spec ersetzbar).
                 (SwitchDirection::CudaToCpu, 13_500),

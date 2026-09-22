@@ -17,6 +17,8 @@ export interface SupervisorSnapshot {
   app_epoch: string;
   generation: number;
   runtime_phase: string;
+  /** Letzter Boot-/Laufzeit-Fehlergrund (inhaltsfrei), null wenn keiner. */
+  runtime_reason: string | null;
   active_variant: BackendVariant | null;
   admission_open: boolean;
   artifact_phase: 'not_installed' | 'downloading' | 'verifying' | 'staged' | 'installed' | 'repair_required' | 'removing';

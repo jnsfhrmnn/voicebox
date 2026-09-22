@@ -201,11 +201,17 @@ fn is_process_alive(pid: u32) -> bool {
     }
 }
 
+/// Gemeinsames Graceful-Shutdown-Fenster für Produkt (MainSwitchSteps::teardown_source)
+/// und 30×-Bench (bench_module::switch_bench::stop_backend) — Maßnahmen-Parität,
+/// damit sich die Zahl nie wieder doppelt setzen muss (Drift-Erfahrung 87845d9).
+pub(crate) const GRACEFUL_SHUTDOWN_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+
 fn resolve_sidecar_path() -> std::path::PathBuf {
     // JFW-1 (Spec): Das Pre-Flight muss EXAKT dieselbe Binary auflösen wie der
-    // Runtime-Spawn ueber `app.shell().sidecar("jf-whisper-server")`. Tauri löst
-    // den Sidecar relativ zum App-Exe auf: <exe_dir>/jf-whisper-server[.exe] —
-    // OHNE Target-Triple (tauri-build legt das externalBin so neben dem Exe ab).
+    // Runtime-Spawn über `process_windows::spawn_sidecar` (Block (c) hat den
+    // Tauri-Shell-Spawn ersetzt). Im Release-Layout löst sich die Sidecar
+    // relativ zum App-Exe auf: <exe_dir>/jf-whisper-server[.exe] bzw. onedir —
+    // OHNE Target-Triple (tauri-build legt das externalBin so neben das Exe ab).
     // Würde das Pre-Flight eine andere Datei prüfen als die, die danach gestartet
     // wird, migrierte es ins Leere (falsche DB / falscher Head) — deshalb identische
     // Auflösung wie relative_command_path() im Shell-Plugin.
@@ -236,7 +242,29 @@ fn resolve_sidecar_path() -> std::path::PathBuf {
         }
     }
     // Dev-Fallback (in Release nicht erreichbar — das Pre-Flight ist debug-gated).
+    // Reihenfolge wie bench_module.rs: die reale onedir-Sidecar mit Target-Triple
+    // (build_binary.py) ZUERST; der ~512-B-Platzhalter von setup-dev-sidecar.js
+    // ist nicht ausführbar (Exec format error) und wird nie gewählt.
     let dev = std::path::PathBuf::from("tauri/src-tauri/binaries");
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    // a) onedir mit Target-Triple (identisch zur Bench-Auflösung bench_module.rs).
+    let triple = if cfg!(windows) {
+        format!("{BASE}-x86_64-pc-windows-msvc")
+    } else {
+        BASE.to_string()
+    };
+    let onedir = dev.join(&triple).join(format!("{BASE}{exe_suffix}"));
+    if onedir.exists() {
+        return onedir;
+    }
+    // b) onefile mit Triple — nur wenn echt (> 10 KB, Schwelle wie setup-dev-sidecar.js).
+    let onefile = dev.join(format!("{triple}{exe_suffix}"));
+    if let Ok(meta) = std::fs::metadata(&onefile) {
+        if meta.len() > 10_000 {
+            return onefile;
+        }
+    }
+    // c) Letzter Fallback: flacher Pfad (altes Verhalten).
     if cfg!(windows) {
         dev.join(format!("{BASE}.exe"))
     } else {
@@ -929,7 +957,7 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             // Danach beendet der vertragliche Job-Close (B8) den Baum; das Ende wird
             // unmittelbar danach bestätigt (B5).
             {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                let deadline = std::time::Instant::now() + GRACEFUL_SHUTDOWN_WINDOW;
                 while is_process_alive(pid) && std::time::Instant::now() < deadline {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
