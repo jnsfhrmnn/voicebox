@@ -24,6 +24,30 @@ pub const SUPERVISOR_EVENT: &str = "backend:supervisor";
 
 const MAILBOX_CAPACITY: usize = 64;
 
+/// Sendet ein Command mit begrenztem Wartefenster (Review 2026-09-22, F-03):
+/// `try_send` allein verwirft bei voller Mailbox STILL — für terminale
+/// (Boot-/Switch-Abschluss-)Commands ist das inakzeptabel. Hier: bis 2 s in
+/// 50-ms-Schritten nachlegen; danach laut protokollieren statt schweigen.
+/// Aufruf nur aus synchronen Kontexten (die Actor-Caller sind es).
+fn send_with_timeout(tx: &tokio::sync::mpsc::Sender<Command>, mut cmd: Command) -> bool {
+    for _ in 0..40 {
+        match tx.try_send(cmd) {
+            Ok(()) => return true,
+            Err(tokio::sync::mpsc::error::TrySendError::Full(m)) => {
+                cmd = m;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                eprintln!("[supervisor] FEHLER: Mailbox geschlossen — terminales Command verworfen");
+                return false;
+            }
+        }
+    }
+    eprintln!("[supervisor] FEHLER: Mailbox 2 s voll — terminales Command verworfen");
+    false
+}
+
+
 enum Command {
     /// CPU-Sidecar wird gespawnt (vorhandener Spawn-Pfad in main.rs).
     BootStarted,
@@ -327,9 +351,9 @@ impl Supervisor {
                                         to_generation,
                                         old_cuda_pid,
                                         std::time::Duration::from_secs(1),
-                                        || { let _ = tx2.try_send(Command::SwitchDrained { op_id: op_id.clone() }); },
-                                        |instance| { let _ = tx2.try_send(Command::SwitchTargetReady { op_id: op_id.clone(), instance }); },
-                                        |reason| { let _ = tx2.try_send(Command::SwitchFailed { op_id: op_id.clone(), reason }); },
+                                        || { send_with_timeout(&tx2, Command::SwitchDrained { op_id: op_id.clone() }); },
+                                        |instance| { send_with_timeout(&tx2, Command::SwitchTargetReady { op_id: op_id.clone(), instance }); },
+                                        |reason| { send_with_timeout(&tx2, Command::SwitchFailed { op_id: op_id.clone(), reason }); },
                                     );
                                     let result = match &outcome {
                                         SwitchOutcome::Completed => SwitchResult::Success,
@@ -493,7 +517,7 @@ impl Supervisor {
                                     "verifying_manifest" | "verifying_signature" => ArtifactPhase::Verifying,
                                     _ => return, // extracting/committing → Staged folgt unten
                                 };
-                                let _ = tx2.try_send(Command::ArtifactPhaseUpdate { phase: p });
+                                send_with_timeout(&tx2, Command::ArtifactPhaseUpdate { phase: p });
                             };
                             let result = if kind == OperationKind::InstallAddon {
                                 manager.install_release(progress)
@@ -502,12 +526,12 @@ impl Supervisor {
                             };
                 match result {
                     Ok(build) => {
-                        let _ = tx2.try_send(Command::ArtifactPhaseUpdate { phase: ArtifactPhase::Staged });
+                        send_with_timeout(&tx2, Command::ArtifactPhaseUpdate { phase: ArtifactPhase::Staged });
                         eprintln!("supervisor: Addon-Operation {kind:?} fertig — Build {}", build.build_id);
-                        let _ = tx2.try_send(Command::ArtifactOperationDone { kind });
+                        send_with_timeout(&tx2, Command::ArtifactOperationDone { kind });
                     }
                     Err(reason) => {
-                        let _ = tx2.try_send(Command::ArtifactOperationFailed { kind, reason });
+                        send_with_timeout(&tx2, Command::ArtifactOperationFailed { kind, reason });
                     }
                 }
             });
@@ -542,10 +566,10 @@ impl Supervisor {
                         tauri::async_runtime::spawn_blocking(move || {
                             match manager.remove() {
                                 Ok(()) => {
-                                    let _ = tx2.try_send(Command::ArtifactOperationDone { kind: OperationKind::RemoveAddon });
+                                    send_with_timeout(&tx2, Command::ArtifactOperationDone { kind: OperationKind::RemoveAddon });
                                 }
                                 Err(reason) => {
-                                    let _ = tx2.try_send(Command::ArtifactOperationFailed { kind: OperationKind::RemoveAddon, reason });
+                                    send_with_timeout(&tx2, Command::ArtifactOperationFailed { kind: OperationKind::RemoveAddon, reason });
                                 }
                             }
                         });

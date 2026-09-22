@@ -5,6 +5,13 @@ mod switch_bench {
     //! (`switch_driver::run_switch`) mit echten Prozessschritten: `spawn_sidecar` +
     //! Job-Object, Ready-Handshake, Silence-WAV-Inferenz-Smoke, NVML-VRAM-Evidence.
     //! Läuft nur mit `JFW_SWITCH_BENCH=1`; sonst skip (CI bleibt grün).
+//!
+//! BEWUSSTES TEST-DOUBLE (Review 2026-09-22, F-05): Start-/Teardown-/Smoke-Logik
+//! ist hier eine zweite Implementierung neben `main.rs::MainSwitchSteps`.
+//! PARITÄTS-REGEL: jede Maßnahme am Prozesspfad MUSS an BEIDEN Stellen gesetzt
+//! werden (Drift-Erfahrung 87845d9: Graceful-Fenster). Geteilte Werte gehören in
+//! `super::`-Konstanten (z. B. `GRACEFUL_SHUTDOWN_WINDOW`); Abweichungen sind im
+//! Kommentar zu begründen.
     //!
     //! Voraussetzungen: CPU-Sidecar in binaries/, installierter CUDA-Build unter
     //! %LOCALAPPDATA%\JFWhisper-bench\backends\cuda (wird bei Bedarf per
