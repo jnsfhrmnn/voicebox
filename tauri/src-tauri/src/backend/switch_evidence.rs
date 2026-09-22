@@ -340,9 +340,13 @@ impl SwitchEvidence {
         self.process_end_confirmed = true;
     }
 
-    /// Wechsel abschließen: Journal atomar schreiben, Pfad zurückgeben.
-    pub fn finish(mut self, result: SwitchResult) -> PathBuf {
-        let path = journal_path(&self.operation_id);
+    /// Wechsel terminal abschließen: Journal atomar nach `dir` schreiben
+    /// (Temp-Verzeichnis in Tests, echtes Laufwerk über `finish`).
+    pub fn finish_in(
+        mut self,
+        dir: &std::path::Path,
+        result: SwitchResult,
+    ) -> Result<PathBuf, String> {
         self.timer.end();
         let journal = SwitchJournal {
             operation_id: self.operation_id.clone(),
@@ -358,8 +362,21 @@ impl SwitchEvidence {
             created_at_ms: self.created_at_ms,
             terminal_at_ms: Some(now_ms()),
         };
-        write_journal(&journal);
-        path
+        write_journal_in(dir, &journal)
+    }
+
+    /// Wechsel abschließen: Journal atomar ins echte Laufwerk schreiben, Pfad
+    /// zurückgeben. Ein Schreibfehler wird geloggt — das Journal ist nie
+    /// Erfolgsautorität allein (Spec C).
+    pub fn finish(self, result: SwitchResult) -> PathBuf {
+        let expected = journal_path(self.operation_id());
+        match self.finish_in(&journal_dir(), result) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("switch_evidence: Journal konnte nicht geschrieben werden: {e}");
+                expected
+            }
+        }
     }
 
     /// Ziel-Generation setzen (nach erfolgreichem Start des neuen Backends).
@@ -377,17 +394,22 @@ impl SwitchEvidence {
     }
 }
 
-/// Journal-Pfad für eine Operation.
-pub fn journal_path(operation_id: &str) -> PathBuf {
-    journal_dir().join(format!("{operation_id}.json"))
+/// Journal-Pfad für eine Operation in `dir` (windows-sicher über `Path::join`).
+pub fn journal_path_in(dir: &std::path::Path, operation_id: &str) -> PathBuf {
+    dir.join(format!("{operation_id}.json"))
 }
 
-/// Atomares Schreiben des Journals (temp + rename). Inhaltsfrei, crashrecoverbar.
-pub fn write_journal(journal: &SwitchJournal) -> Result<PathBuf, String> {
-    let dir = journal_dir();
-    std::fs::create_dir_all(&dir)
+/// Journal-Pfad für eine Operation im echten Journal-Laufwerk.
+pub fn journal_path(operation_id: &str) -> PathBuf {
+    journal_path_in(&journal_dir(), operation_id)
+}
+
+/// Atomares Schreiben des Journals nach `dir` (temp + rename). Inhaltsfrei,
+/// crashrecoverbar — Tests laufen gegen ein Temp-Verzeichnis.
+pub fn write_journal_in(dir: &std::path::Path, journal: &SwitchJournal) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir)
         .map_err(|e| format!("Journaldirectory nicht anlegbar: {e}"))?;
-    let final_path = journal_path(&journal.operation_id);
+    let final_path = journal_path_in(dir, &journal.operation_id);
     // Temp-Datei im selben Verzeichnis → atomares Rename auf demselben Volume.
     let tmp_path = dir.join(format!(".{}.tmp", journal.operation_id));
     let json = serde_json::to_string_pretty(journal)
@@ -399,10 +421,13 @@ pub fn write_journal(journal: &SwitchJournal) -> Result<PathBuf, String> {
     Ok(final_path)
 }
 
-/// Journal lesen (Recovery-Hinweis nach Crash). `None`, wenn nicht vorhanden.
-#[allow(dead_code)] // JFW-12 Block (g): Recovery-Diagnose, main.rs/CLI
-pub fn read_journal(operation_id: &str) -> Option<SwitchJournal> {
-    let path = journal_path(operation_id);
+/// Atomares Schreiben ins echte Journal-Laufwerk: `write_journal_in` mit
+/// `journal_dir()` (`%LOCALAPPDATA%/JFWhisper/runtime/backend-operations`).
+
+/// Journal aus `dir` lesen (Recovery-Hinweis nach Crash). `None`, wenn nicht
+/// vorhanden oder unlesbar.
+pub fn read_journal_in(dir: &std::path::Path, operation_id: &str) -> Option<SwitchJournal> {
+    let path = journal_path_in(dir, operation_id);
     if !path.exists() {
         return None;
     }
@@ -410,14 +435,18 @@ pub fn read_journal(operation_id: &str) -> Option<SwitchJournal> {
     serde_json::from_str(&content).ok()
 }
 
-/// Alle Journal-Dateien im Verzeichnis (Diagnose/Recovery). Leerer Vec, wenn leer.
-#[allow(dead_code)] // JFW-12 Block (g): Recovery-Diagnose, main.rs/CLI
-pub fn list_journals() -> Vec<PathBuf> {
-    let dir = journal_dir();
+/// Journal aus dem echten Journal-Laufwerk lesen (Recovery-Diagnose beim
+/// App-Start — Spec C/E: unvollständige Operationen werden erkannt).
+pub fn read_journal(operation_id: &str) -> Option<SwitchJournal> {
+    read_journal_in(&journal_dir(), operation_id)
+}
+
+/// Alle Journal-Dateien in `dir` (Diagnose/Recovery). Leerer Vec, wenn leer.
+pub fn list_journals_in(dir: &std::path::Path) -> Vec<PathBuf> {
     if !dir.exists() {
         return Vec::new();
     }
-    std::fs::read_dir(&dir)
+    std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok())
@@ -426,11 +455,19 @@ pub fn list_journals() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Alle Journal-Dateien des echten Journal-Laufwerks (Recovery-Scan beim Start).
+pub fn list_journals() -> Vec<PathBuf> {
+    list_journals_in(&journal_dir())
+}
+
 /// Ergebnis der Freigabe-Verifikation (B6 Schritt 5–7).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReleaseOutcome {
     /// Zwei grüne Proben in Folge → `0 MiB zurechenbar`, Receipt abgeschlossen.
     Released { attributable_mib: u64 },
+    /// Grüne Probe, aber das Receipt ist noch offen (erste grüne Probe) — der
+    /// Aufrufer muss nach `min_interval` erneut proben (B6 Schritt 6).
+    Pending,
     /// Mindestabstand/Probe-Fehler — der Supervisor muss erneut proben.
     ProbeError(String),
 }
@@ -448,7 +485,6 @@ pub enum ReleaseOutcome {
 /// Produkt ruft main.rs/Actor [`GpuContextProbe::capture`] auf. Fail-closed:
 /// ein NVML-Fehler wird als [`ReleaseOutcome::ProbeError`] zurückgegeben, nie
 /// als Freigabe interpretiert.
-#[allow(dead_code)] // JFW-12 Block (g): Aufrufer = main.rs Teardown-Schritt (CUDA-Job beendet), Zielsystem-E2E
 pub fn run_release_verification(
     receipt: &mut GpuReceipt,
     evidence: &mut SwitchEvidence,
@@ -476,8 +512,8 @@ pub fn run_release_verification(
                     attributable_mib: attributable.unwrap_or(0),
                 }
             } else {
-                // Erste grüne Probe — der Supervisor muss erneut proben.
-                ReleaseOutcome::ProbeError("erste_gruene_probe".to_string())
+                // Erste grüne Probe — der Aufrufer muss erneut proben.
+                ReleaseOutcome::Pending
             }
         }
         Ok(ReleaseVerification::Red(pids)) => {
@@ -605,9 +641,9 @@ mod tests {
     fn release_zwei_gruene_proben_leitet_null_mib_ab() {
         let mut receipt = GpuReceipt::from_smoke_probe(&fake_probe(&[4242]));
         let mut ev = fresh_evidence();
-        // Erste Probe: PID weg → grün, aber noch nicht abgeschlossen.
+        // Erste Probe: PID weg → grün, aber noch nicht abgeschlossen (Pending).
         let r1 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
-        assert!(matches!(r1, ReleaseOutcome::ProbeError(_)), "erste Probe darf nicht freigegeben");
+        assert!(matches!(r1, ReleaseOutcome::Pending), "erste Probe darf nicht freigegeben");
         // Zweite grüne Probe → abgeschlossen + 0 MiB.
         let r2 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
         assert_eq!(r2, ReleaseOutcome::Released { attributable_mib: 0 });
@@ -675,13 +711,14 @@ mod tests {
         run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
         assert_eq!(run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[]))), ReleaseOutcome::Released { attributable_mib: 0 });
         // Terminal abschließen → Journal atomar geschrieben.
-        let path = ev.finish(SwitchResult::Success);
+        // JFW-12 Block (h): Journal-Lifecycle gegen ein Temp-Verzeichnis — kein
+        // Test-Artefakt in den echten App-Daten (%LOCALAPPDATA%).
+        let dir = temp_dir("full-lifecycle");
+        let path = ev.finish_in(&dir, SwitchResult::Success).expect("Journal schreibbar");
         assert!(path.exists(), "Journal-Datei muss existieren");
         // Zurücklesen und prüfen (Recovery-Hinweis, Spec C).
-        let j = read_journal(op_id).expect("Journal muss lesbar sein");
-        // Test-Artefakt aus dem echten Journalverzeichnis entfernen — kein
-        // Fake-Eintrag in den App-Daten hinterlassen.
-        let _ = std::fs::remove_file(&path);
+        let j = read_journal_in(&dir, op_id).expect("Journal muss lesbar sein");
+        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(j.operation_id, op_id);
         assert_eq!(j.direction, SwitchDirection::CudaToCpu);
         assert_eq!(j.result, SwitchResult::Success);
@@ -699,5 +736,68 @@ mod tests {
         assert_eq!(j.vram_probes[1].attributable_mib, Some(0));
         // Terminalzeitpunkt gesetzt.
         assert!(j.terminal_at_ms.is_some());
+    }
+
+    // ── JFW-12 Block (h): Journal-I/O an das echte Laufwerk gebunden ──────
+    // Produktion liest/schreibt das Journal-Verzeichnis unter LOCALAPPDATA (JFWhisper,
+    // runtime, backend-operations) via `journal_dir()`/`Path::join` (windows-sicher);
+    // die Tests laufen gegen ein Temp-Verzeichnis und hinterlassen nichts.
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("jfw12-blockh-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Temp-Verzeichnis anlegbar");
+        d
+    }
+
+    #[test]
+    fn journal_io_temp_roundtrip_und_auflistung() {
+        let dir = temp_dir("journal-io");
+        let mut ev = SwitchEvidence::new("op-temp-1".into(), SwitchDirection::CudaToCpu, "epoch-1".into(), 2);
+        ev.begin_phase(PhaseName::Drain);
+        ev.set_job_tree_terminated();
+        ev.set_process_end_confirmed();
+        let path = ev.finish_in(&dir, SwitchResult::Success).expect("Journal schreibbar");
+        assert!(path.exists());
+
+        // read/list sind an dieselbe SwitchJournal-Ablage gebunden (Spec C).
+        let j = read_journal_in(&dir, "op-temp-1").expect("Journal lesbar");
+        assert_eq!(j.operation_id, "op-temp-1");
+        assert!(j.job_tree_terminated && j.process_end_confirmed);
+        assert!(j.terminal_at_ms.is_some(), "terminale Operation ist nicht unvollständig");
+        assert!(read_journal_in(&dir, "gibts-nicht").is_none());
+
+        // Nur *.json wird aufgelistet (kein Fremd-Müll im Verzeichnis).
+        std::fs::write(dir.join("not-a-journal.txt"), b"x").unwrap();
+        let listed = list_journals_in(&dir);
+        assert_eq!(listed.len(), 1, "nur Journal-JSONs werden gelistet");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unvollstaendiges_journal_ist_als_recovery_hinweis_erkennbar() {
+        let dir = temp_dir("incomplete");
+        // Crash-Abbild: Journal eröffnet, aber nie terminal abgeschlossen.
+        let open = SwitchJournal {
+            operation_id: "op-crash".into(),
+            direction: SwitchDirection::CpuToCuda,
+            app_epoch: "epoch-2".into(),
+            from_generation: 3,
+            to_generation: None,
+            job_tree_terminated: false,
+            process_end_confirmed: false,
+            phases: vec![],
+            vram_probes: vec![],
+            result: SwitchResult::Failure("abgestürzt".into()),
+            created_at_ms: 100,
+            terminal_at_ms: None,
+        };
+        write_journal_in(&dir, &open).expect("Crash-Journal schreibbar");
+        let j = read_journal_in(&dir, "op-crash").expect("lesbar");
+        // Genau diese Bedingung nutzt der Recovery-Scan beim App-Start (Spec C/E).
+        assert!(j.terminal_at_ms.is_none(), "unvollständige Operation muss erkennbar sein");
+        let listed = list_journals_in(&dir);
+        assert_eq!(listed.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

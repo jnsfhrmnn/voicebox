@@ -429,10 +429,13 @@ mod switch_bench {
         // dann beide Abnahmen prüfen — ein Lauf liefert das komplette Bild.
         let directions: Vec<(SwitchDirection, u64)> = match scope.as_str() {
             "cpu2cuda" => vec![(SwitchDirection::CpuToCuda, 15_000)],
-            "cuda2cpu" => vec![(SwitchDirection::CudaToCpu, 10_000)],
+            "cuda2cpu" => vec![(SwitchDirection::CudaToCpu, 13_500)],
             _ => vec![
                 (SwitchDirection::CpuToCuda, 15_000),
-                (SwitchDirection::CudaToCpu, 10_000),
+                // CudaToCpu: 13,5 s (Spec AC Zeile 122, Kalibrierung JFW-12 P3
+                // 2026-09-19 mit onedir-CPU-Sidecar; die alte 10-s-Zahl war eine
+                // onefile-Annahme und ist gegen die kalibrierte Spec ersetzbar).
+                (SwitchDirection::CudaToCpu, 13_500),
             ],
         };
         let mut failures = Vec::new();

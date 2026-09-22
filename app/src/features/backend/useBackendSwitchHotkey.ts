@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
+import { register, unregisterAll, type ShortcutEvent } from '@tauri-apps/plugin-global-shortcut';
 import type { BackendVariant } from './supervisor';
 import { getSupervisorSnapshot, onSupervisorChange, requestBackendSwitch } from './supervisor';
 import { useBackendSwitchHotkeyStore } from './useBackendSwitchHotkeyStore';
@@ -94,20 +94,20 @@ export function useBackendSwitchHotkey() {
     }
 
     let cancelled = false;
-    register(accelerator, (event) => {
+    register(accelerator, (event: ShortcutEvent) => {
       if (cancelled || event.state !== 'Pressed') return;
       const current = activeRef.current;
       // Auf CUDA → CPU (immer erlaubt). Auf CPU/keine Info → CUDA (fail-closed
       // im Supervisor, falls Addon fehlt).
       const target: BackendVariant = current === 'cuda' ? 'cpu' : 'cuda';
-      requestBackendSwitch(target).catch((err) => {
+      requestBackendSwitch(target).catch((err: unknown) => {
         console.warn('[backend-hotkey] Switch abgelehnt:', err);
       });
     })
       .then(() => {
         if (cancelled) void unregisterAll();
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         // Belegung kollidiert mit einer anderen App → nicht fatal, nur loggen.
         console.warn('[backend-hotkey] Registrierung fehlgeschlagen:', err);
       });

@@ -895,15 +895,17 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         }
     }
 
-    /// Schritt 2 (B5/B6): Ausgangs-Backend graceful beenden + Prozessbaum schließen.
+    /// Schritt 2 (B5/B6): Ausgangs-Backend graceful beenden + Prozessbaum
+    /// schließen. JFW-12 Block (h): das Prozessende wird nach dem Job-Close
+    /// (KILL_ON_JOB_CLOSE, B8) wirklich bestätigt — nur ein bestätigtes Ende
+    /// meldet `Ok` und setzt die Journal-Flags (kein erfundener Nachweis).
     fn teardown_source(&self, _direction: backend::switch_evidence::SwitchDirection) -> Result<(), String> {
         let state = self.app.state::<ServerState>();
-        let pid = *state.server_pid.lock().unwrap();
+        let pid = state.server_pid.lock().unwrap().take();
 
-        // JFW-12 B8 (Windows): Job entnommen — sein Drop am Ende der Funktion
-        // schließt das Job → KILL_ON_JOB_CLOSE beendet den kompletten Baum.
+        // JFW-12 B8 (Windows): Job entnommen — sein Drop tötet den Baum.
         #[cfg(windows)]
-        let _job = state.sidecar_job.lock().unwrap().take();
+        let job = state.sidecar_job.lock().unwrap().take();
         #[cfg(not(windows))]
         {
             let _child = state.child.lock().unwrap().take();
@@ -919,15 +921,11 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                 let _ = client.post(format!("http://127.0.0.1:{port}/shutdown")).send();
             }
 
-            // Auf Exit warten (max. 5 s); bleibt der Prozess, tötet das Job-Close.
-            #[cfg(windows)]
+            // Kurzes Graceful-Fenster (max. 5 s).
             {
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                 while is_process_alive(pid) && std::time::Instant::now() < deadline {
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                if is_process_alive(pid) {
-                    eprintln!("teardown_source: PID {pid} überlebt graceful Shutdown — Job-Close tötet den Baum");
                 }
             }
             #[cfg(not(windows))]
@@ -938,9 +936,21 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                 let _ = Command::new("kill").args(["-9", "--", &format!("-{pid}")]).output();
             }
 
-            *state.server_pid.lock().unwrap() = None;
+            // JFW-12 Block (h): Job-Close (Drop) = KILL_ON_JOB_CLOSE beendet den
+            // kompletten Prozessbaum (B8) — danach wird das Ende bestätigt.
+            #[cfg(windows)]
+            drop(job);
+            let confirm_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while is_process_alive(pid) && std::time::Instant::now() < confirm_deadline {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            if is_process_alive(pid) {
+                return Err(format!(
+                    "Prozessbaum (PID {pid}) überlebt Job-Close — Ende nicht bestätigt"
+                ));
+            }
+            println!("teardown_source: Prozessbaum (PID {pid}) beendet — Ende bestätigt");
         }
-        // `job` wird hier gedroppt → KILL_ON_JOB_CLOSE (Windows).
         Ok(())
     }
 
@@ -1191,48 +1201,14 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         }
     }
 
-    /// Schritt 5 (B6.6–7, nur CudaToCpu): VRAM-Nachweis über die getestete
-    /// [`GpuReceipt`]-API — der alte CUDA-PID darf in zwei aufeinanderfolgenden
-    /// NVML-Proben (≥1 s Abstand) nicht mehr als Compute-Prozess geführt werden.
-    /// Erst nach Abschluss des Receipts ist `0 MiB zurechenbar` abgeleitet.
-    fn vram_evidence(&self, old_cuda_pid: Option<u32>) -> Result<(), String> {
-        let pid = old_cuda_pid.ok_or("VRAM-Evidence unmöglich: kein bekannter CUDA-PID")?;
-
-        // Ausgangs-Probe **nach** dem CUDA-Teardown (B6.4–5): der alte PID muss
-        // dann schon weg sein, sonst ist die Freigabe rot (fail-closed).
-        let probe = backend::gpu_evidence::GpuContextProbe::capture()
-            .map_err(|e| format!("NVML-Probe fehlgeschlagen: {e}"))?;
-        if probe.contains_pid(pid) {
-            return Err(format!(
-                "CUDA-Prozess (PID {pid}) nach Teardown noch aktiv — VRAM nicht freigegeben"
-            ));
-        }
-
-        // Nur der jf-whisper-CUDA-PID zählt als aufgezeichnet (B6); fremde
-        // Compute-Prozesse dürfen die Freigabe nicht rot machen. Zwei grüne
-        // Proben mit ≥1 s Abstand, dann 0-MiB-Ableitung (B6.7).
-        let mut receipt = backend::gpu_evidence::GpuReceipt::for_pids([pid]);
-        for attempt in 0..2u32 {
-            if attempt == 1 {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-            let p = backend::gpu_evidence::GpuContextProbe::capture()
-                .map_err(|e| format!("NVML-Wiederholprobe fehlgeschlagen: {e}"))?;
-            match receipt.verify(&p, std::time::Duration::from_secs(1)) {
-                Ok(backend::gpu_evidence::ReleaseVerification::Green) => {}
-                Ok(backend::gpu_evidence::ReleaseVerification::Red(pids)) => {
-                    return Err(format!(
-                        "CUDA-Compute-PIDs noch aktiv: {pids:?} — VRAM nicht freigegeben"
-                    ));
-                }
-                Err(e) => return Err(format!("VRAM-Probe fehlgeschlagen: {e}")),
-            }
-        }
-        let attributable = receipt
-            .attributable_mib()
-            .map_err(|e| format!("0-MiB-Ableitung verweigert: {e}"))?;
-        debug_assert_eq!(attributable, 0);
-        Ok(())
+    /// Schritt 5 (B6.6–7): eine frische NVML-Kontextprobe. Der Freigabe-Zyklus
+    /// (zwei grüne Proben, mindestens 1 s Abstand, PID-gebunden — AC-G) läuft
+    /// in `switch_driver::run_switch_steps` über `run_release_verification`;
+    /// die Probequelle bleibt injizierbar (Tests ohne CUDA-Hardware).
+    fn vram_probe(
+        &self,
+    ) -> Result<backend::gpu_evidence::GpuContextProbe, backend::gpu_evidence::GpuEvidenceError> {
+        backend::gpu_evidence::GpuContextProbe::capture()
     }
 
     /// Fail-closed nach Zielstart (B5.8/B6.8): frisch gestartetes Ziel beenden.
@@ -1242,9 +1218,9 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             eprintln!("teardown_target: PID {} ist nicht das aktuelle Sidecar — übersprungen", instance.pid);
             return;
         }
-        // Graceful per HTTP, dann Job-Close (Drop am Ende der Funktion).
+        // Graceful per HTTP, dann Job-Close (Drop = KILL_ON_JOB_CLOSE).
         #[cfg(windows)]
-        let _job = state.sidecar_job.lock().unwrap().take();
+        let job = state.sidecar_job.lock().unwrap().take();
         #[cfg(not(windows))]
         {
             let _child = state.child.lock().unwrap().take();
@@ -1255,15 +1231,24 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         {
             let _ = client.post(format!("http://127.0.0.1:{}/shutdown", instance.port)).send();
         }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while is_process_alive(instance.pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         #[cfg(windows)]
-        {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while is_process_alive(instance.pid) && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
+        drop(job);
+        // JFW-12 Block (h): Ende bestätigen (best effort — Fail-closed-Rollback).
+        let confirm_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while is_process_alive(instance.pid) && std::time::Instant::now() < confirm_deadline {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if is_process_alive(instance.pid) {
+            eprintln!(
+                "teardown_target: PID {} überlebt Job-Close — Rückruf nicht bestätigt",
+                instance.pid
+            );
         }
         *state.server_pid.lock().unwrap() = None;
-        // `job` wird hier gedroppt → KILL_ON_JOB_CLOSE (Windows).
     }
 }
 
@@ -1899,6 +1884,24 @@ pub fn run() {
             let switch_steps: std::sync::Arc<dyn backend::switch_driver::SwitchStepFactory> =
                 std::sync::Arc::new(MainSwitchSteps { app: app.handle().clone() });
             app.manage(backend::supervisor::Supervisor::start(app.handle().clone(), manager, Some(switch_steps)));
+
+            // JFW-12 Block (h): Recovery-Hinweis aus dem echten Switch-Journal
+            // (Spec C/E): unvollständige Operationen eines Absturzes werden beim
+            // Start erkannt — nur als Hinweis, nie als Erfolgsautorität.
+            for journal_path in backend::switch_evidence::list_journals() {
+                let incomplete = journal_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(backend::switch_evidence::read_journal)
+                    .filter(|j| j.terminal_at_ms.is_none());
+                if let Some(j) = incomplete {
+                    eprintln!(
+                        "JFW-12: unvollständige Switch-Operation {} ({}) aus vorherigem Abbruch — nur Recovery-Hinweis",
+                        j.operation_id,
+                        j.direction.as_str()
+                    );
+                }
+            }
 
             #[cfg(desktop)]
             {

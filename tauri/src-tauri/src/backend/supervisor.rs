@@ -244,9 +244,13 @@ impl Supervisor {
                                 let op_id = {
                                     apply(&app, &actor_state, |st| {
                                         let from_gen = st.runtime.active_generation().unwrap_or(0);
-                                        let op = Operation::new(kind);
+                                        let mut op = Operation::new(kind);
+                                        // JFW-12 Block (h): Zielgeneration VOR dem Start
+                                        // reservieren (B5.4 „Kandidatengeneration") — das
+                                        // Journal bindet sie terminal.
+                                        op.target_generation = Some(st.next_generation());
                                         // Switch-Evidenz eröffnen (Spec C, AC-F): inhaltsfrei;
-                                        // wird beim terminalen Schritt abgeschlossen + Journal.
+                                        // der Switch-Blocking-Task schreibt das Journal.
                                         let evidence = crate::backend::switch_evidence::SwitchEvidence::new(
                                             op.operation_id.clone(),
                                             direction,
@@ -273,10 +277,22 @@ impl Supervisor {
                                             }
                                         }
                                     });
-                                    // op_id aus dem State lesen (Operation ist gesetzt).
-                                    actor_state.lock().unwrap().operation.as_ref().map(|o| o.operation_id.clone())
+                                    // op_id + reservierte Zielgeneration aus dem State lesen.
+                                    actor_state.lock().unwrap().operation.as_ref().map(|o| (o.operation_id.clone(), o.target_generation))
                                 };
-                                let Some(op_id) = op_id else { return; };
+                                let Some((op_id, to_generation)) = op_id else { continue; };
+                                let to_generation = to_generation.unwrap_or(0);
+                                // JFW-12 Block (h): Collector in den Switch-Blocking-Task
+                                // überführen — die Evidenz wird entlang der echten Schritte
+                                // geschrieben (Phasen, Prozessende, VRAM-Proben).
+                                let evidence = actor_state.lock().unwrap().evidence.take();
+                                let Some(evidence) = evidence else {
+                                    let _ = tx_for_ops.try_send(Command::SwitchFailed {
+                                        op_id,
+                                        reason: "keine Switch-Evidenz eröffnet".into(),
+                                    });
+                                    continue;
+                                };
 
                                 // JFW-12 Block (g): Echte Prozessschritte im Blocking-Task.
                                 // Die Sequenz + Rollback-Logik lebt in switch_driver::run_switch;
@@ -290,34 +306,41 @@ impl Supervisor {
                                             op_id: op_id.clone(),
                                             reason: "keine Switch-Prozessschritte injiziert".into(),
                                         });
-                                        return;
+                                        continue;
                                     }
                                 };
                                 let tx2 = tx_for_ops.clone();
                                 tauri::async_runtime::spawn_blocking(move || {
-                                    use crate::backend::switch_driver::{run_switch, SwitchContext};
+                                    use crate::backend::switch_driver::{
+                                        run_switch_steps, SwitchContext, SwitchOutcome,
+                                    };
+                                    use crate::backend::switch_evidence::SwitchResult;
                                     let ctx = SwitchContext { op_id: op_id.clone(), direction };
-                                    run_switch(
+                                    // JFW-12 Block (h): kompletter Prozesszyklus
+                                    // Drain → Teardown (Job-Object-Kill) → Zielstart →
+                                    // Readiness-Smoke → VRAM-Evidence → Ready, fail-closed
+                                    // Rollback bei jedem Schrittfehler (B5.8/B6.8).
+                                    let (outcome, collector) = run_switch_steps(
                                         &ctx,
-                                        || steps.drain(direction),
-                                        || steps.teardown_source(direction),
-                                        || steps.start_target(direction),
-                                        |i| steps.readiness_smoke(i),
-                                        if matches!(direction, crate::backend::switch_evidence::SwitchDirection::CudaToCpu) {
-                                            // Eigener Arc-Klon: die Box-Closure ist 'static und
-                                            // darf den von den anderen Closures geborrowten `steps`
-                                            // nicht weg-moven.
-                                            let vram_steps = Arc::clone(&steps);
-                                            Some(Box::new(move |_: &SidecarInstance| {
-                                                vram_steps.vram_evidence(old_cuda_pid)
-                                            }))
-                                        } else {
-                                            None
-                                        },
-                                        |i| steps.teardown_target(i),
+                                        steps,
+                                        evidence,
+                                        to_generation,
+                                        old_cuda_pid,
+                                        std::time::Duration::from_secs(1),
                                         || { let _ = tx2.try_send(Command::SwitchDrained { op_id: op_id.clone() }); },
                                         |instance| { let _ = tx2.try_send(Command::SwitchTargetReady { op_id: op_id.clone(), instance }); },
                                         |reason| { let _ = tx2.try_send(Command::SwitchFailed { op_id: op_id.clone(), reason }); },
+                                    );
+                                    let result = match &outcome {
+                                        SwitchOutcome::Completed => SwitchResult::Success,
+                                        SwitchOutcome::Failed(r) => SwitchResult::Failure(r.clone()),
+                                    };
+                                    let probe_count = collector.vram_probes().len();
+                                    let path = collector.finish(result);
+                                    eprintln!(
+                                        "supervisor: Switch-Journal geschrieben ({}; {} VRAM-Proben)",
+                                        path.display(),
+                                        probe_count
                                     );
                                 });
                             }
@@ -351,7 +374,14 @@ impl Supervisor {
                                 RuntimePhase::PreparingCpu(o) if *o == op_id => BackendVariant::Cpu,
                                 _ => return,
                             };
-                            let gen = st.next_generation();
+                            // JFW-12 Block (h): Die Zielgeneration wurde beim Admit
+                            // reserviert (B5.4) und ist im Journal des Switch-Tasks
+                            // gebunden; nur der Notfall reserviert hier neu.
+                            let reserved = st.operation.as_ref().and_then(|o| o.target_generation);
+                            let gen = match reserved {
+                                Some(g) => g,
+                                None => st.next_generation(),
+                            };
                             let lease = ActiveLease {
                                 app_epoch: st.app_epoch.clone(),
                                 generation: gen,
@@ -381,14 +411,9 @@ impl Supervisor {
                             st.active_lease = Some(lease);
                             st.operation = None; // Switch abgeschlossen.
                             st.runtime = to;
-                            // Evidenz abschließen: Ziel-Generation binden + Journal atomar.
-                            if let Some(mut ev) = st.evidence.take() {
-                                ev.set_to_generation(gen);
-                                let path = ev.finish(
-                                    crate::backend::switch_evidence::SwitchResult::Success,
-                                );
-                                eprintln!("supervisor: Switch-Journal geschrieben ({})", path.display());
-                            }
+                            // JFW-12 Block (h): Das Journal schreibt terminal der
+                            // Switch-Blocking-Task (Evidenz entlang der echten
+                            // Prozessschritte, atomar auf das echte Laufwerk).
                         });
                     }
                     Command::SwitchFailed { op_id, reason } => {
@@ -409,13 +434,8 @@ impl Supervisor {
                             st.runtime = RuntimePhase::NoBackendReady(reason.clone());
                             st.active_lease = None;
                             st.operation = None;
-                            // Evidenz abschließen: Journal mit Fehlergrund (inhaltsfrei).
-                            if let Some(ev) = st.evidence.take() {
-                                let path = ev.finish(
-                                    crate::backend::switch_evidence::SwitchResult::Failure(reason),
-                                );
-                                eprintln!("supervisor: Switch-Journal geschrieben ({})", path.display());
-                            }
+                            // JFW-12 Block (h): Auch das Fehlerjournal schreibt der
+                            // Switch-Blocking-Task terminal (Grund inhaltsfrei).
                         });
                     }
                     Command::Shutdown => {
