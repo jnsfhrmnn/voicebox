@@ -388,3 +388,49 @@ class TranscriptionRun(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)
+
+
+# ── JFW-8: Delivery-Operation (sichere Zieluebergabe + Recovery) ──────────
+# ``identity_hash`` ist UNIQUE — identische erneute Zustellung ist idempotent,
+# abweichender Payload fail-closed ``conflict``. ``auto_attempt_consumed`` ist
+# das dauerhaft verbrauchte Einmalbudget (Exactly-once, VOR externer Eingabe
+# gespeichert); genau ein terminaler Ausgang pro Operation ueber bedingte
+# DB-Transaktionen. ``recovery_text`` ist der benutzergebundene, zeitlich
+# begrenzte Rohtext — gemeinsam mit den sensiblen Zwi­schenstaenden geloescht;
+# der danach verbleibende Tombstone ist inhaltsfrei. Schreiben ausschliesslich
+# ueber ``services/delivery_contract.py``.
+
+class DeliveryOperation(Base):
+    """Versionierte Delivery-Operation der appuebergreifenden Zieluebergabe (JFW-8).
+
+    ``attempt_intent`` und ``error_trace`` sind konstruktiv inhaltsfrei
+    (IDs, Adapter, Zustaende, Dauer, Fehlercodes — nie Rohtext, Clipboard,
+    Fenstertitel mit Inhalt oder Credential).
+    """
+    __tablename__ = "delivery_operations"
+    id = Column(String, primary_key=True)  # uuid4
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    delivery_operation_id = Column(String, nullable=False, index=True)  # jfw8-op-<uuid4hex>
+    parent_operation_id = Column(String, nullable=True)  # append-only Kindbezug
+    contract_version = Column(String, nullable=False)  # delivery_operation_v1
+    run_id = Column(String, nullable=False)  # JFW-6/JFW-7-Run-Identitaet
+    audio_hash = Column(String, nullable=False)
+    jfw7_attempt_id = Column(String, nullable=True)
+    revision_id = Column(String, nullable=True)  # JFW-7 raw_transcript-Revision
+    text_hash = Column(String, nullable=False)
+    target_snapshot = Column(JSON, nullable=True)  # inhaltsfreie Zielidentitaet
+    target_confirmed = Column(Boolean, nullable=False, default=False)
+    capability = Column(String, nullable=True)  # direct_text|verified_paste|manual_only|blocked
+    status = Column(String, nullable=False, default="received")  # Delivery State Contract
+    auto_attempt_consumed = Column(Boolean, nullable=False, default=False)
+    attempt_intent = Column(JSON, nullable=True)  # inhaltsfrei
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    recovery_text = Column(Text, nullable=True)  # benutzergebundener Rohtext
+    recovery_expires_at = Column(DateTime, nullable=True)
+    error_trace = Column(JSON, nullable=True)  # inhaltsfreie Fehlerpfad-Spur
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)

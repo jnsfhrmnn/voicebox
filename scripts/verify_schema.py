@@ -339,6 +339,39 @@ def create_empty(db_path: Path) -> int:
                 ON transcription_runs (run_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_transcription_runs_identity_hash
                 ON transcription_runs (identity_hash);
+            -- JFW-8 (Spec Delivery State Contract): Delivery-Operation.
+            CREATE TABLE IF NOT EXISTS delivery_operations (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                delivery_operation_id TEXT NOT NULL,
+                parent_operation_id TEXT,
+                contract_version TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                audio_hash TEXT NOT NULL,
+                jfw7_attempt_id TEXT,
+                revision_id TEXT,
+                text_hash TEXT NOT NULL,
+                target_snapshot JSON,
+                target_confirmed BOOLEAN NOT NULL DEFAULT 0,
+                capability TEXT,
+                status TEXT NOT NULL DEFAULT 'received',
+                auto_attempt_consumed BOOLEAN NOT NULL DEFAULT 0,
+                attempt_intent JSON,
+                attempt_id TEXT,
+                app_epoch TEXT,
+                reason_code TEXT,
+                recovery_text TEXT,
+                recovery_expires_at TIMESTAMP,
+                error_trace JSON,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_delivery_operations_delivery_operation_id
+                ON delivery_operations (delivery_operation_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_delivery_operations_identity_hash
+                ON delivery_operations (identity_hash);
             """
         )
         con.commit()
