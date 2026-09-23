@@ -226,6 +226,40 @@ def create_empty(db_path: Path) -> int:
                 ON diarization_results (job_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_diarization_results_identity_hash
                 ON diarization_results (identity_hash);
+            -- JFW-11 (Spec Dual-Source Capture Contract): Meeting-Ergebnis.
+            CREATE TABLE IF NOT EXISTS meeting_results (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                meeting_run_id TEXT NOT NULL,
+                jfw6_run_reference TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                jfw2_result_hash TEXT,
+                jfw3_result_hash TEXT,
+                manifest_hash TEXT NOT NULL,
+                timebase TEXT NOT NULL DEFAULT 'qpc_100ns',
+                attempt_id TEXT,
+                app_epoch TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                reason_code TEXT,
+                stop_reason TEXT,
+                tracks JSON,
+                gaps JSON,
+                sync JSON,
+                sound_cue_marks JSON,
+                recovery_status JSON,
+                dedupe JSON,
+                name_mappings JSON,
+                result_hash TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_meeting_results_job_id
+                ON meeting_results (job_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_meeting_results_identity_hash
+                ON meeting_results (identity_hash);
             """
         )
         con.commit()

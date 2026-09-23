@@ -239,3 +239,48 @@ class DiarizationResult(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)
+
+# ── JFW-11: Dual-Source-Meeting-Ergebnisvertrag (Spec „Dual-Source Capture Contract") ─
+# Eine Ergebnisebene je Identitaet (job + meeting-run + JFW-6-Run-Referenz +
+# Vertragsversion). ``identity_hash`` ist UNIQUE — hoechstens ein autoritatives
+# Ergebnis je Identitaet. ``result_hash`` gesetzt <=> atomarer Ergebnis-Commit
+# (fuer JFW-4 freigegeben nur bei status secured_dual/secured_partial). Schreiben
+# ausschliesslich ueber ``services/meeting_contract.py``. ``dedupe`` und
+# ``name_mappings`` sind revisionsgebundene Annotationen auf unveraenderten
+# JFW-2-/JFW-3-Ergebnissen — nie Text-, Wort- oder Clustermutation.
+
+class MeetingResult(Base):
+    """Versioniertes Dual-Source-Meeting-Ergebnis, gebunden an Capture-Manifest
+    sowie JFW-2-/JFW-3-Revisionen (JFW-11). Zwei getrennte autoritative
+    Rohspuren (mic/remote) bleiben in ``tracks`` mit Abschnitts-Hashes und
+    eigener Provenienz referenziert; die gemeinsame Zeitbasis ist als versionierte
+    Ableitung (Offset + Drift) in ``sync`` abgebildet.
+    """
+    __tablename__ = "meeting_results"
+    id = Column(String, primary_key=True)  # uuid4
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    job_id = Column(String, nullable=False, index=True)
+    meeting_run_id = Column(String, nullable=False)
+    jfw6_run_reference = Column(String, nullable=False)
+    contract_version = Column(String, nullable=False)
+    jfw2_result_hash = Column(String, nullable=True)
+    jfw3_result_hash = Column(String, nullable=True)
+    manifest_hash = Column(String, nullable=False)
+    timebase = Column(String, nullable=False, default="qpc_100ns")
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="queued")  # Run-Zustaende
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    stop_reason = Column(String, nullable=True)
+    tracks = Column(JSON, nullable=True)
+    gaps = Column(JSON, nullable=True)
+    sync = Column(JSON, nullable=True)
+    sound_cue_marks = Column(JSON, nullable=True)
+    recovery_status = Column(JSON, nullable=True)
+    dedupe = Column(JSON, nullable=True)
+    name_mappings = Column(JSON, nullable=True)
+    result_hash = Column(String, nullable=True)  # kanonischer Ergebnis-Hash
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)

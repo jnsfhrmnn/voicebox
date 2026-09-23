@@ -101,7 +101,8 @@
       "tasks",
       "transcript_revisions",
       "alignment_results",
-      "diarization_results"
+      "diarization_results",
+      "meeting_results"
     ],
     "forbidden": [
       "profiles",
