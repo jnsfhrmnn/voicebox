@@ -134,6 +134,15 @@ class TranscriptRevision(Base):
     stt_model = Column(String, nullable=True)
     language = Column(String, nullable=True)
     duration_ms = Column(Integer, nullable=True)
+    # JFW-7: Revisionstrennung raw_transcript | user_edited (nullable — Altzeilen
+    # ohne revision_kind gelten als raw_transcript). user_edited ist eine getrennte
+    # Kindrevision mit parent_revision_id; die Rohrevision bleibt unveraendert.
+    revision_kind = Column(String, nullable=True, default="raw_transcript")
+    parent_revision_id = Column(String, nullable=True)
+    text_hash = Column(String, nullable=True)  # kanonischer Hash des exakten Textes
+    segments = Column(JSON, nullable=True)  # Modelloutput-Segmente (unveraendert)
+    provenance = Column(JSON, nullable=True)  # Sprache/Modell-/Backend-/Audio-Bindung
+    run_identity_hash = Column(String, nullable=True)  # FK -> transcription_runs
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -323,6 +332,59 @@ class RecordingRun(Base):
     transcription_authorized = Column(Boolean, nullable=False, default=False)
     handoff_count = Column(Integer, nullable=False, default=0)  # genau eine Zustellung autorisiert
     deletion_contract_hash = Column(String, nullable=True)  # gebundener Löschvertrag
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
+
+
+# ── JFW-7: Transkriptions-Run (Processing Contract + Snapshot) ─────────────
+# Eine Run-Ebene je Identitaet (Run-ID + Quellart + Ergebnisvertragsversion).
+# ``identity_hash`` ist UNIQUE — identische erneute Zustellung ist idempotent,
+# abweichender Payload fail-closed ``conflict``. ``snapshot_hash`` bindet den
+# eingefrorenen Run-Snapshot (Audio-/Manifest-Hash, Modell + Revision, Sprache,
+# Decode, JFW-12-Backendgeneration). ``attempts`` traegt die sichtbare
+# Attempt-Liste inklusive Backendwechsel; genau ein terminaler Ausgang pro
+# Attempt ueber bedingte DB-Transaktionen (Muster JFW-12 ``task_contract.py`` /
+# JFW-6 ``recording_contract.py``) — Commit/Cancel-Race: der zuerst dauerhaft
+# gespeicherte terminale Ausgang gewinnt. Schreiben ausschliesslich ueber
+# ``services/transcription_contract.py``.
+
+class TranscriptionRun(Base):
+    """Versionierter Transkriptions-Run mit eingefrorenem Snapshot (JFW-7).
+
+    ``result_hash`` gesetzt <=> atomarer Rohtranskript-Commit (``raw_ready``);
+    ``no_speech``/``failed``/``canceled``/``invalidated`` erzeugen keinen
+    JFW-8-Payload. Genau eine autoritative Rohrevision pro Attempt liegt in
+    ``transcript_revisions`` (``source_attempt_id`` UNIQUE).
+    """
+    __tablename__ = "transcription_runs"
+    id = Column(String, primary_key=True)  # uuid4
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    run_id = Column(String, nullable=False, index=True)  # jfw7-run-/upload-/retranscribe-<uuid4hex>
+    source_kind = Column(String, nullable=False)  # jfw6_handoff | upload | retranscribe
+    contract_version = Column(String, nullable=False)  # dictation_raw_v1
+    audio_hash = Column(String, nullable=False)
+    manifest_hash = Column(String, nullable=True)  # JFW-6-Handoff; Upload ohne Manifest
+    capture_id = Column(String, nullable=True)
+    stop_reason = Column(String, nullable=True)  # Stopgrund aus dem JFW-6-Manifest
+    snapshot = Column(JSON, nullable=False)  # eingefrorener Run-Snapshot
+    snapshot_hash = Column(String, nullable=False)
+    stt_model = Column(String, nullable=True)
+    model_revision = Column(String, nullable=True)  # immutable 40-Hex-Revision
+    language_setting = Column(String, nullable=True)  # auto | de | en
+    backend_variant = Column(String, nullable=True)  # cpu | cuda (Attempt-Bindung)
+    backend_generation = Column(Integer, nullable=True)  # JFW-12-Generation
+    attempt_id = Column(String, nullable=True)  # aktuell gebundener Attempt
+    attempts = Column(JSON, nullable=True)  # sichtbare Attempt-Liste
+    status = Column(String, nullable=False, default="queued")  # Processing Contract
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    app_epoch = Column(String, nullable=True)
+    revision_id = Column(String, nullable=True)  # autoritative raw_transcript-Revision
+    text_hash = Column(String, nullable=True)
+    result_hash = Column(String, nullable=True)  # kanonischer Ergebnis-Hash
+    duration_ms = Column(Integer, nullable=True)
+    cancel_requested_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)

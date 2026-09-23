@@ -138,6 +138,12 @@ def create_empty(db_path: Path) -> int:
                 stt_model TEXT,
                 language TEXT,
                 duration_ms INTEGER,
+                revision_kind TEXT,
+                parent_revision_id TEXT,
+                text_hash TEXT,
+                segments JSON,
+                provenance JSON,
+                run_identity_hash TEXT,
                 created_at TIMESTAMP
             );
             CREATE UNIQUE INDEX IF NOT EXISTS uq_transcript_revisions_source_attempt_id
@@ -296,6 +302,43 @@ def create_empty(db_path: Path) -> int:
                 ON recording_runs (run_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_runs_identity_hash
                 ON recording_runs (identity_hash);
+            -- JFW-7 (Spec Processing Contract): Transkriptions-Run mit Snapshot.
+            CREATE TABLE IF NOT EXISTS transcription_runs (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                audio_hash TEXT NOT NULL,
+                manifest_hash TEXT,
+                capture_id TEXT,
+                stop_reason TEXT,
+                snapshot JSON NOT NULL,
+                snapshot_hash TEXT NOT NULL,
+                stt_model TEXT,
+                model_revision TEXT,
+                language_setting TEXT,
+                backend_variant TEXT,
+                backend_generation INTEGER,
+                attempt_id TEXT,
+                attempts JSON,
+                status TEXT NOT NULL DEFAULT 'queued',
+                reason_code TEXT,
+                app_epoch TEXT,
+                revision_id TEXT,
+                text_hash TEXT,
+                result_hash TEXT,
+                duration_ms INTEGER,
+                cancel_requested_at TIMESTAMP,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_transcription_runs_run_id
+                ON transcription_runs (run_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_transcription_runs_identity_hash
+                ON transcription_runs (identity_hash);
             """
         )
         con.commit()

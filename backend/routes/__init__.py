@@ -22,6 +22,7 @@ def register_routers(app: FastAPI) -> None:
     from .diarization import router as diarization_router
     from .meeting import router as meeting_router
     from .recording import router as recording_router
+    from .dictation import router as dictation_router
 
     app.include_router(health_router)
     app.include_router(captures_router)
@@ -33,3 +34,4 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(diarization_router)
     app.include_router(meeting_router)
     app.include_router(recording_router)
+    app.include_router(dictation_router)

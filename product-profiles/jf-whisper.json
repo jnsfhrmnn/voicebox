@@ -1,6 +1,6 @@
 {
   "profile": "jf-whisper",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "baseline_commit": "7df366d0c8302c09170102b86e801a1f46fb81cc",
   "patch_ledger": [
     "2c9d02af62ff978ad33b1e9f303547b26becb079",
@@ -44,7 +44,8 @@
       "alignment",
       "diarization",
       "meeting",
-      "recording"
+      "recording",
+      "dictation"
     ],
     "forbidden": [
       "profiles",
@@ -94,7 +95,8 @@
     "cuda-Router ist verboten, bis JFW-12 den eigenen Artefaktvertrag liefert; Voicebox-CUDA-Download bleibt deaktiviert.",
     "events/history/channels/profiles sind TTS-/Generation-Flaechen und bleiben aus dem Laufzeitvertrag entfernt.",
     "forced-alignment (JFW-2) ist nur nutzerinitiiert lokal installierbar: facebook/mms_fa ist CC-BY-NC-4.0 und darf nie gebuendelt oder mit dem Release distribuiert werden (fail-closed).",
-    "speaker-diarization (JFW-3) ist nur nutzerinitiiert lokal installierbar: pyannote/speaker-diarization-community-1 ist CC-BY-4.0 (Gated); die Distributionskette der Bestandsgewichte ist nicht vollstaendig belegt, deshalb bleibt die Bündelung ins Release gesperrt (fail-closed, JFW-3-Regel)."
+    "speaker-diarization (JFW-3) ist nur nutzerinitiiert lokal installierbar: pyannote/speaker-diarization-community-1 ist CC-BY-4.0 (Gated); die Distributionskette der Bestandsgewichte ist nicht vollstaendig belegt, deshalb bleibt die Bündelung ins Release gesperrt (fail-closed, JFW-3-Regel).",
+    "JFW-7: genau ein unveraendertes Rohtranskript (JFW-9-Verbot: kein Text-LLM, kein Refinement, NIE). STT-Modellprofil jfw7-dictate-v1 (openai/whisper-large-v3-turbo, Lizenz MIT, Base-Linie Apache-2.0) ausschliesslich ueber bewussten Download mit Installationsmanifest; Decode fest task=transcribe (translate unerreichbar)."
   ],
   "database_tables": {
     "active": [
@@ -105,7 +107,8 @@
       "alignment_results",
       "diarization_results",
       "meeting_results",
-      "recording_runs"
+      "recording_runs",
+      "transcription_runs"
     ],
     "forbidden": [
       "profiles",
