@@ -40,6 +40,7 @@ ALLOWED_TABLES = {
     "meeting_results",
     "recording_runs",
     "transcription_runs",
+    "export_jobs",
 }
 FORBIDDEN_COLS = {
     "auto_refine", "llm_model", "smart_cleanup", "self_correction",
@@ -148,6 +149,7 @@ with new_engine.connect() as conn4:
 print(f"[S4] Alembic-Head: {head}")
 for k, v in meta:
     print(f"     schema_meta[{k}] = {v[:80]}{'...' if len(v) > 80 else ''}")
-assert head == "f3b8c2d1a6e4", f"S4 Head falsch: {head}"
+assert head == "a91f3d7c26b8", f"S4 Head falsch: {head}"
+# S4: Alembic-Head = a91f3d7c26b8 (JFW-4 export_jobs)
 
 print("\nALLE S1-S4 GRUEN")

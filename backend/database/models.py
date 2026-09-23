@@ -434,3 +434,49 @@ class DeliveryOperation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)
+
+
+class ExportJob(Base):
+    """Versionierter Exportauftrag fuer Sprecher-/Wortzeiten-Exporte (JFW-4).
+
+    ``export_key`` ist der deterministische Export-Schluessel (ohne Zielbindung),
+    ``payload_hash`` bindet zusaetzlich Zielidentitaet und erwartete Dateinamen.
+    ``result_hash`` gesetzt <=> autoritativer Set-Commit; das ``manifest`` traegt
+    die tatsaechlichen Inhalts-Hashes aller Praesentationsdateien.
+    """
+    __tablename__ = "export_jobs"
+    id = Column(String, primary_key=True)  # uuid4
+    export_key = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    contract_version = Column(String, nullable=False)  # jfw4_export_v1
+    job_id = Column(String, nullable=False, index=True)
+    audio_asset_id = Column(String, nullable=False)
+    audio_hash = Column(String, nullable=False)
+    audio_duration_ms = Column(Integer, nullable=False)
+    timebase = Column(String, nullable=False)
+    transcript_run_id = Column(String, nullable=False)
+    transcript_revision_id = Column(String, nullable=False)
+    transcript_revision_hash = Column(String, nullable=False)
+    jfw2_result_hash = Column(String, nullable=False)
+    jfw2_status = Column(String, nullable=False)
+    jfw3_result_hash = Column(String, nullable=False)
+    jfw3_status = Column(String, nullable=False)
+    jfw11_commit_hash = Column(String, nullable=True)
+    jfw11_status = Column(String, nullable=True)
+    formats = Column(JSON, nullable=False)  # ["json", ...]
+    export_profile = Column(String, nullable=False)
+    name_policy = Column(String, nullable=False)
+    partial_mode = Column(String, nullable=True)
+    partial_confirmed = Column(Boolean, nullable=False, default=False)
+    target_dir = Column(String, nullable=True)
+    expected_files = Column(JSON, nullable=True)
+    status = Column(String, nullable=False, default="preparing")  # Export Result Contract
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    readiness = Column(JSON, nullable=True)  # Readiness inkl. Warnungen
+    manifest = Column(JSON, nullable=True)  # Praesentationsdatei-Hashes
+    result_hash = Column(String, nullable=True)  # gesetzt <=> exported
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)

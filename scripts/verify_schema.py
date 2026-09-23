@@ -372,6 +372,48 @@ def create_empty(db_path: Path) -> int:
                 ON delivery_operations (delivery_operation_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_delivery_operations_identity_hash
                 ON delivery_operations (identity_hash);
+            -- JFW-4 (Spec Export Result Contract + Format Contract): Exportauftrag.
+            CREATE TABLE IF NOT EXISTS export_jobs (
+                id TEXT PRIMARY KEY,
+                export_key TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                audio_asset_id TEXT NOT NULL,
+                audio_hash TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                timebase TEXT NOT NULL,
+                transcript_run_id TEXT NOT NULL,
+                transcript_revision_id TEXT NOT NULL,
+                transcript_revision_hash TEXT NOT NULL,
+                jfw2_result_hash TEXT NOT NULL,
+                jfw2_status TEXT NOT NULL,
+                jfw3_result_hash TEXT NOT NULL,
+                jfw3_status TEXT NOT NULL,
+                jfw11_commit_hash TEXT,
+                jfw11_status TEXT,
+                formats JSON NOT NULL,
+                export_profile TEXT NOT NULL,
+                name_policy TEXT NOT NULL,
+                partial_mode TEXT,
+                partial_confirmed BOOLEAN NOT NULL DEFAULT 0,
+                target_dir TEXT,
+                expected_files JSON,
+                status TEXT NOT NULL DEFAULT 'preparing',
+                reason_code TEXT,
+                readiness JSON,
+                manifest JSON,
+                result_hash TEXT,
+                attempt_id TEXT,
+                app_epoch TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_export_jobs_job_id
+                ON export_jobs (job_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_export_jobs_export_key
+                ON export_jobs (export_key);
             """
         )
         con.commit()
