@@ -178,6 +178,54 @@ def create_empty(db_path: Path) -> int:
                 ON alignment_results (job_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_alignment_results_identity_hash
                 ON alignment_results (identity_hash);
+            -- JFW-3 (Spec Diarization Result Contract): Diarisierungsergebnis.
+            CREATE TABLE IF NOT EXISTS diarization_results (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                attempt_id TEXT,
+                app_epoch TEXT,
+                audio_asset_id TEXT NOT NULL,
+                audio_hash TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                timebase TEXT NOT NULL DEFAULT 'audio_ms_v1',
+                transcript_run_id TEXT NOT NULL,
+                transcript_revision_id TEXT NOT NULL,
+                transcript_revision_hash TEXT NOT NULL,
+                jfw2_reference_status TEXT NOT NULL,
+                jfw2_result_hash TEXT,
+                speaker_mode TEXT NOT NULL DEFAULT 'auto',
+                speaker_count_min INTEGER,
+                speaker_count_max INTEGER,
+                diarization_profile TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                model_id TEXT,
+                model_revision TEXT,
+                model_sha256 TEXT,
+                model_license TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                reason_code TEXT,
+                clusters JSON,
+                turns JSON,
+                words JSON,
+                coverage_speech_ms INTEGER,
+                coverage_usable_ms INTEGER,
+                cluster_count INTEGER,
+                turn_count INTEGER,
+                word_count INTEGER,
+                word_assigned_count INTEGER,
+                overlap_count INTEGER,
+                uncertainty_count INTEGER,
+                result_hash TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_diarization_results_job_id
+                ON diarization_results (job_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_diarization_results_identity_hash
+                ON diarization_results (identity_hash);
             """
         )
         con.commit()

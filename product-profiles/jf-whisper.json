@@ -1,6 +1,6 @@
 {
   "profile": "jf-whisper",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "baseline_commit": "7df366d0c8302c09170102b86e801a1f46fb81cc",
   "patch_ledger": [
     "2c9d02af62ff978ad33b1e9f303547b26becb079",
@@ -41,7 +41,8 @@
       "models",
       "settings",
       "tasks",
-      "alignment"
+      "alignment",
+      "diarization"
     ],
     "forbidden": [
       "profiles",
@@ -61,7 +62,8 @@
   "model_classes": {
     "active": [
       "whisper-stt",
-      "forced-alignment"
+      "forced-alignment",
+      "speaker-diarization"
     ],
     "forbidden": [
       "tts",
@@ -89,7 +91,8 @@
     "Einziges Build-Profil des Forks. Runtime-Flags koennen verbotene Funktionen nicht reaktivieren.",
     "cuda-Router ist verboten, bis JFW-12 den eigenen Artefaktvertrag liefert; Voicebox-CUDA-Download bleibt deaktiviert.",
     "events/history/channels/profiles sind TTS-/Generation-Flaechen und bleiben aus dem Laufzeitvertrag entfernt.",
-    "forced-alignment (JFW-2) ist nur nutzerinitiiert lokal installierbar: facebook/mms_fa ist CC-BY-NC-4.0 und darf nie gebuendelt oder mit dem Release distribuiert werden (fail-closed)."
+    "forced-alignment (JFW-2) ist nur nutzerinitiiert lokal installierbar: facebook/mms_fa ist CC-BY-NC-4.0 und darf nie gebuendelt oder mit dem Release distribuiert werden (fail-closed).",
+    "speaker-diarization (JFW-3) ist nur nutzerinitiiert lokal installierbar: pyannote/speaker-diarization-community-1 ist CC-BY-4.0 (Gated); die Distributionskette der Bestandsgewichte ist nicht vollstaendig belegt, deshalb bleibt die Bündelung ins Release gesperrt (fail-closed, JFW-3-Regel)."
   ],
   "database_tables": {
     "active": [
@@ -97,7 +100,8 @@
       "capture_settings",
       "tasks",
       "transcript_revisions",
-      "alignment_results"
+      "alignment_results",
+      "diarization_results"
     ],
     "forbidden": [
       "profiles",

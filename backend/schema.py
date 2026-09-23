@@ -45,8 +45,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Schema-Kontrakt (Profil: product-profiles/jf-whisper.json -> database_tables).
-SCHEMA_ID = "jfwhisper-v3"
-ALLOWED_TABLES = ("captures", "capture_settings", "tasks", "transcript_revisions", "alignment_results")
+SCHEMA_ID = "jfwhisper-v4"
+ALLOWED_TABLES = (
+    "captures",
+    "capture_settings",
+    "tasks",
+    "transcript_revisions",
+    "alignment_results",
+    "diarization_results",
+)
 BACKUP_KEEP = 5
 
 

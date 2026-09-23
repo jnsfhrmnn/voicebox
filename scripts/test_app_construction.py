@@ -102,7 +102,7 @@ def install_stubs() -> None:
 
 
 # Pfade, die im Transkriptionsprofil ERREICHBAR sein muessen (STT-Kern).
-REQUIRED_PATHS = ["/health", "/captures"]
+REQUIRED_PATHS = ["/health", "/captures", "/diarization"]
 
 # Pfade, die NICHT erreichbar sein duerfen (TTS-/LLM-Flaechen).
 # Prefixe fuer ganze Flaechen + exakte Endpunkte, die in aktiven Routern

@@ -43,6 +43,7 @@ DEFAULT_REQUIRED = [
     "backend.services.transcribe",   # Whisper-STT
     "backend.routes.transcription",  # Transkriptions-Router
     "backend.routes.captures",       # Captures-Router (STT-Modelle)
+    "backend.routes.diarization",    # JFW-3 Diarisierungs-Router
 ]
 
 

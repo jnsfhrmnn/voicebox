@@ -181,3 +181,61 @@ class AlignmentResult(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)
+
+# ── JFW-3: Diarisierungs-Ergebnisvertrag (Spec „Diarization Result Contract") ─
+# Eine Ergebnisebene je Identitaet (job + audio + Transkriptrevision + JFW-2-
+# Referenz + Profil + Sprecheranzahl + Vertragsversion). ``identity_hash`` ist
+# UNIQUE — hoechstens ein autoritatives Ergebnis je Identitaet. ``result_hash``
+# gesetzt <=> atomarer Ergebnis-Commit (fuer JFW-11/JFW-4 freigegeben nur bei
+# status diarized/partially_diarized). Schreiben ausschliesslich ueber
+# ``services/diarization_contract.py``. JFW-3 ergaenzt ausschliesslich
+# Sprechercluster/Turns/Overlap-/Unsicherheitsstatus — nie Text oder Zeiten.
+
+class DiarizationResult(Base):
+    """Versioniertes Diarisierungsergebnis, gebunden an Audio-, Transkript- und
+    JFW-2-Revision (JFW-3). Neutrale Cluster (``speaker_01``…) gelten nur
+    innerhalb dieser Ergebnisrevision; Anzeigeetikette (``Sprecher 1``…) sind
+    getrennt davon und behaupten keine Personenidentität.
+    """
+    __tablename__ = "diarization_results"
+    id = Column(String, primary_key=True)  # uuid4
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    job_id = Column(String, nullable=False, index=True)
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    audio_asset_id = Column(String, nullable=False)
+    audio_hash = Column(String, nullable=False)
+    audio_duration_ms = Column(Integer, nullable=False)
+    timebase = Column(String, nullable=False, default="audio_ms_v1")
+    transcript_run_id = Column(String, nullable=False)
+    transcript_revision_id = Column(String, nullable=False)
+    transcript_revision_hash = Column(String, nullable=False)
+    jfw2_reference_status = Column(String, nullable=False)
+    jfw2_result_hash = Column(String, nullable=True)
+    speaker_mode = Column(String, nullable=False, default="auto")  # auto|exact|range
+    speaker_count_min = Column(Integer, nullable=True)
+    speaker_count_max = Column(Integer, nullable=True)
+    diarization_profile = Column(String, nullable=False)
+    contract_version = Column(String, nullable=False)
+    model_id = Column(String, nullable=True)
+    model_revision = Column(String, nullable=True)
+    model_sha256 = Column(String, nullable=True)
+    model_license = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="queued")  # RESULT_STATES
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    clusters = Column(JSON, nullable=True)
+    turns = Column(JSON, nullable=True)
+    words = Column(JSON, nullable=True)
+    coverage_speech_ms = Column(Integer, nullable=True)
+    coverage_usable_ms = Column(Integer, nullable=True)
+    cluster_count = Column(Integer, nullable=True)
+    turn_count = Column(Integer, nullable=True)
+    word_count = Column(Integer, nullable=True)
+    word_assigned_count = Column(Integer, nullable=True)
+    overlap_count = Column(Integer, nullable=True)
+    uncertainty_count = Column(Integer, nullable=True)
+    result_hash = Column(String, nullable=True)  # kanonischer Ergebnis-Hash
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
