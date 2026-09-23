@@ -1,6 +1,6 @@
 {
   "profile": "jf-whisper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "baseline_commit": "7df366d0c8302c09170102b86e801a1f46fb81cc",
   "patch_ledger": [
     "2c9d02af62ff978ad33b1e9f303547b26becb079",
@@ -40,7 +40,8 @@
       "transcription",
       "models",
       "settings",
-      "tasks"
+      "tasks",
+      "alignment"
     ],
     "forbidden": [
       "profiles",
@@ -59,7 +60,8 @@
   },
   "model_classes": {
     "active": [
-      "whisper-stt"
+      "whisper-stt",
+      "forced-alignment"
     ],
     "forbidden": [
       "tts",
@@ -86,14 +88,16 @@
   "notes": [
     "Einziges Build-Profil des Forks. Runtime-Flags koennen verbotene Funktionen nicht reaktivieren.",
     "cuda-Router ist verboten, bis JFW-12 den eigenen Artefaktvertrag liefert; Voicebox-CUDA-Download bleibt deaktiviert.",
-    "events/history/channels/profiles sind TTS-/Generation-Flaechen und bleiben aus dem Laufzeitvertrag entfernt."
+    "events/history/channels/profiles sind TTS-/Generation-Flaechen und bleiben aus dem Laufzeitvertrag entfernt.",
+    "forced-alignment (JFW-2) ist nur nutzerinitiiert lokal installierbar: facebook/mms_fa ist CC-BY-NC-4.0 und darf nie gebuendelt oder mit dem Release distribuiert werden (fail-closed)."
   ],
   "database_tables": {
     "active": [
       "captures",
       "capture_settings",
       "tasks",
-      "transcript_revisions"
+      "transcript_revisions",
+      "alignment_results"
     ],
     "forbidden": [
       "profiles",

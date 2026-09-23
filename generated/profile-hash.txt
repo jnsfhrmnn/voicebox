@@ -6,6 +6,6 @@
     "a5773807a596c0db217a36342abc4bd843ff2e61"
   ],
   "profile": "jf-whisper",
-  "profile_sha256": "fddbbb0a2b084e8ce289bdc70b881c137ef7cc36d0f66a3d10a197f629833311",
-  "version": "0.1.0"
+  "profile_sha256": "fae589b6715946e2bc72d5059f801d51cdd00d990bbf8dd0c39bf68bb4cb8df8",
+  "version": "0.2.0"
 }

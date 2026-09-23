@@ -84,7 +84,7 @@ def check(db_path: Path) -> int:
 
 def create_empty(db_path: Path) -> int:
     """Leere, konforme jf-whisper-DB anlegen (nur erlaubte Tabellen)."""
-    prof = load_profile()
+    load_profile()  # Profil muss lesbar sein (fail-closed bei Defekt)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     con = sqlite3.connect(db_path)
@@ -142,6 +142,42 @@ def create_empty(db_path: Path) -> int:
             );
             CREATE UNIQUE INDEX IF NOT EXISTS uq_transcript_revisions_source_attempt_id
                 ON transcript_revisions (source_attempt_id);
+            -- JFW-2 (Spec Alignment Result Contract): Forced-Alignment-Ergebnis.
+            CREATE TABLE IF NOT EXISTS alignment_results (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                attempt_id TEXT,
+                app_epoch TEXT,
+                audio_asset_id TEXT NOT NULL,
+                audio_hash TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                timebase TEXT NOT NULL DEFAULT 'audio_ms_v1',
+                transcript_run_id TEXT NOT NULL,
+                transcript_revision_id TEXT NOT NULL,
+                transcript_revision_hash TEXT NOT NULL,
+                language_ranges JSON NOT NULL,
+                alignment_profile TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                model_id TEXT,
+                model_revision TEXT,
+                model_sha256 TEXT,
+                model_license TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                reason_code TEXT,
+                words JSON,
+                coverage_alignable INTEGER,
+                coverage_aligned INTEGER,
+                result_hash TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_alignment_results_job_id
+                ON alignment_results (job_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_alignment_results_identity_hash
+                ON alignment_results (identity_hash);
             """
         )
         con.commit()

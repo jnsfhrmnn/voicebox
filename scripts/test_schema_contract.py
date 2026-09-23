@@ -4,7 +4,7 @@ S1: frische DB -> exakt captures + capture_settings, keine LLM-/TTS-Spalten.
 S2: Legacy-Voicebox-DB (13 verbotene Tabellen + LLM-Spalten) konvergiert auf
     das Kontrakt; Captures-Daten bleiben erhalten.
 S3: zweiter Lauf ist ein No-Op (Idempotenz).
-S4: Alembic-Head = be53d0afd8cc, schema_meta konsistent.
+S4: Alembic-Head = 3d8f2b16c4ae, schema_meta konsistent.
 
 Aufruf:  backend/.venv/Scripts/python.exe scripts/test_schema_contract.py
 """
@@ -30,7 +30,7 @@ def columns_of(engine_, table):
     return {c["name"] for c in insp.get_columns(table)}
 
 
-ALLOWED_TABLES = {"captures", "capture_settings", "tasks", "transcript_revisions"}
+ALLOWED_TABLES = {"captures", "capture_settings", "tasks", "transcript_revisions", "alignment_results"}
 FORBIDDEN_COLS = {
     "auto_refine", "llm_model", "smart_cleanup", "self_correction",
     "preserve_technical", "default_playback_voice_id",
@@ -138,6 +138,6 @@ with new_engine.connect() as conn4:
 print(f"[S4] Alembic-Head: {head}")
 for k, v in meta:
     print(f"     schema_meta[{k}] = {v[:80]}{'...' if len(v) > 80 else ''}")
-assert head == "08a06bf47a91", f"S4 Head falsch: {head}"
+assert head == "3d8f2b16c4ae", f"S4 Head falsch: {head}"
 
 print("\nALLE S1-S4 GRUEN")

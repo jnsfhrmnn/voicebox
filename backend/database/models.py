@@ -135,3 +135,49 @@ class TranscriptRevision(Base):
     language = Column(String, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── JFW-2: Alignment-Ergebnisvertrag (Spec „Alignment Result Contract") ────
+# Eine Ergebnisebene je Identitaet (job + audio + Transkriptrevision + Profil +
+# Vertragsversion). ``identity_hash`` ist UNIQUE — hoechstens ein autoritatives
+# Ergebnis je Identitaet, kein konkurrierender Duplicate-Lauf. ``result_hash``
+# gesetzt <=> atomarer Ergebnis-Commit existiert (fuer JFW-3/JFW-4 freigegeben
+# nur bei status aligned/partially_aligned). Schreiben ausschliesslich ueber
+# ``services/alignment_contract.py``.
+
+class AlignmentResult(Base):
+    """Versioniertes Forced-Alignment-Ergebnis, gebunden an Audio- und
+    Transkriptrevision (JFW-2). Zeitgrenzen liegen in der Zeitbasis
+    ``audio_ms_v1`` (Fließkomma-ms); der sichtbare Worttext bleibt exaktes
+    Substring der gebundenen Revision (No-text-change-Vertrag).
+    """
+    __tablename__ = "alignment_results"
+    id = Column(String, primary_key=True)  # uuid4
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    job_id = Column(String, nullable=False, index=True)
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    audio_asset_id = Column(String, nullable=False)
+    audio_hash = Column(String, nullable=False)
+    audio_duration_ms = Column(Integer, nullable=False)
+    timebase = Column(String, nullable=False, default="audio_ms_v1")
+    transcript_run_id = Column(String, nullable=False)
+    transcript_revision_id = Column(String, nullable=False)
+    transcript_revision_hash = Column(String, nullable=False)
+    language_ranges = Column(JSON, nullable=False, default=list)
+    alignment_profile = Column(String, nullable=False)
+    contract_version = Column(String, nullable=False)
+    model_id = Column(String, nullable=True)
+    model_revision = Column(String, nullable=True)
+    model_sha256 = Column(String, nullable=True)
+    model_license = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="queued")  # RESULT_STATES
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    words = Column(JSON, nullable=True)
+    coverage_alignable = Column(Integer, nullable=True)
+    coverage_aligned = Column(Integer, nullable=True)
+    result_hash = Column(String, nullable=True)  # kanonischer Ergebnis-Hash
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
