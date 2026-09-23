@@ -20,6 +20,7 @@ def register_routers(app: FastAPI) -> None:
     from .tasks import router as tasks_router
     from .alignment import router as alignment_router
     from .diarization import router as diarization_router
+    from .meeting import router as meeting_router
 
     app.include_router(health_router)
     app.include_router(captures_router)
@@ -29,3 +30,4 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(tasks_router)
     app.include_router(alignment_router)
     app.include_router(diarization_router)
+    app.include_router(meeting_router)

@@ -42,7 +42,8 @@
       "settings",
       "tasks",
       "alignment",
-      "diarization"
+      "diarization",
+      "meeting"
     ],
     "forbidden": [
       "profiles",
