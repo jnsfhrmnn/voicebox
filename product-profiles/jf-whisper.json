@@ -47,7 +47,8 @@
       "recording",
       "dictation",
       "delivery",
-      "export"
+      "export",
+      "minutes"
     ],
     "forbidden": [
       "profiles",
@@ -68,7 +69,8 @@
     "active": [
       "whisper-stt",
       "forced-alignment",
-      "speaker-diarization"
+      "speaker-diarization",
+      "meeting-minutes-llm"
     ],
     "forbidden": [
       "tts",
@@ -100,7 +102,8 @@
     "speaker-diarization (JFW-3) ist nur nutzerinitiiert lokal installierbar: pyannote/speaker-diarization-community-1 ist CC-BY-4.0 (Gated); die Distributionskette der Bestandsgewichte ist nicht vollstaendig belegt, deshalb bleibt die Bündelung ins Release gesperrt (fail-closed, JFW-3-Regel).",
     "JFW-7: genau ein unveraendertes Rohtranskript (JFW-9-Verbot: kein Text-LLM, kein Refinement, NIE). STT-Modellprofil jfw7-dictate-v1 (openai/whisper-large-v3-turbo, Lizenz MIT, Base-Linie Apache-2.0) ausschliesslich ueber bewussten Download mit Installationsmanifest; Decode fest task=transcribe (translate unerreichbar).",
     "JFW-8: sichere appuebergreifende Zieluebergabe — genau ein automatischer Einfuegeversuch pro Operation (Exactly-once-Budget), Zielbindung ueber Verbundidentitaet mit Verifikations-Doppelauslosung und Scroll-Lock-Vertrag, Recovery-Queue benutzergebunden und begrenzt mit inhaltsfreiem Tombstone; Fehlerpfad-Spuren ohne Rohtext/Clipboard/Fenstertitel/Credential.",
-    "JFW-4: verlustfreies JSON jfw4_export_v1 als Set-Autoritaet (Pflichtbestandteil jedes Sets mit SRT/VTT) und Downstream-Eingangsautoritaet fuer JFW-13; byteidentisch bei Snapshot-Gleichheit, Export-Schluessel ohne Zielbindung, atomarer Set-Commit ueber Attempt-Tempdateien, unbestaetigte Namen bleiben neutrale Annotation."
+    "JFW-4: verlustfreies JSON jfw4_export_v1 als Set-Autoritaet (Pflichtbestandteil jedes Sets mit SRT/VTT) und Downstream-Eingangsautoritaet fuer JFW-13; byteidentisch bei Snapshot-Gleichheit, Export-Schluessel ohne Zielbindung, atomarer Set-Commit ueber Attempt-Tempdateien, unbestaetigte Namen bleiben neutrale Annotation.",
+    "JFW-13: lokales Sprachmodell (Modellklasse meeting-minutes-llm, Qwen/Qwen2.5-7B-Instruct, Apache-2.0) wirkt ausschliesslich auf abgeleiteten Protokolldokumenten (Aufgaben/Zusammenfassung/Transkript-Pseudonymisierung); die JFW-9-Grenze fuer das autoritative Rohtranskript bleibt unangetastet. Pseudonymregister pseudonym_v1 ist getrennt und vollstaendig loeschbar."
   ],
   "database_tables": {
     "active": [
@@ -114,7 +117,9 @@
       "recording_runs",
       "transcription_runs",
       "delivery_operations",
-      "export_jobs"
+      "export_jobs",
+      "minutes_results",
+      "pseudonym_registers"
     ],
     "forbidden": [
       "profiles",

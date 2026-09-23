@@ -414,6 +414,71 @@ def create_empty(db_path: Path) -> int:
                 ON export_jobs (job_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_export_jobs_export_key
                 ON export_jobs (export_key);
+            -- JFW-13 (Spec Protokoll Result Contract): Protokollauftrag.
+            CREATE TABLE IF NOT EXISTS minutes_results (
+                id TEXT PRIMARY KEY,
+                minutes_key TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                minutes_profile TEXT NOT NULL,
+                register_id TEXT NOT NULL,
+                register_revision TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                audio_asset_id TEXT NOT NULL,
+                audio_hash TEXT NOT NULL,
+                audio_duration_ms INTEGER NOT NULL,
+                timebase TEXT NOT NULL,
+                transcript_run_id TEXT NOT NULL,
+                transcript_revision_id TEXT NOT NULL,
+                transcript_revision_hash TEXT NOT NULL,
+                transcript_text_hash TEXT NOT NULL,
+                jfw2_result_hash TEXT NOT NULL,
+                jfw2_status TEXT NOT NULL,
+                jfw3_result_hash TEXT NOT NULL,
+                jfw3_status TEXT NOT NULL,
+                jfw4_export_key TEXT NOT NULL,
+                jfw4_result_hash TEXT NOT NULL,
+                jfw11_commit_hash TEXT,
+                jfw11_status TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                reason_code TEXT,
+                readiness JSON,
+                warnings JSON,
+                model_provenance JSON,
+                document JSON,
+                result_hash TEXT,
+                nondeterminism_revisions JSON,
+                attempt_id TEXT,
+                app_epoch TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_minutes_results_job_id
+                ON minutes_results (job_id);
+            CREATE INDEX IF NOT EXISTS ix_minutes_results_register_id
+                ON minutes_results (register_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_minutes_results_minutes_key
+                ON minutes_results (minutes_key);
+            -- JFW-13: getrennte, revisionierte Pseudonym-Zuordnung (loeschbar).
+            CREATE TABLE IF NOT EXISTS pseudonym_registers (
+                id TEXT PRIMARY KEY,
+                register_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                revision_id TEXT NOT NULL,
+                parent_revision_id TEXT,
+                minutes_key TEXT,
+                status TEXT NOT NULL,
+                entries JSON NOT NULL,
+                created_at TIMESTAMP,
+                deleted_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_pseudonym_registers_register_id
+                ON pseudonym_registers (register_id);
+            CREATE INDEX IF NOT EXISTS ix_pseudonym_registers_minutes_key
+                ON pseudonym_registers (minutes_key);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_pseudonym_registers_rev
+                ON pseudonym_registers (register_id, revision);
             """
         )
         con.commit()

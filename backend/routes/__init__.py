@@ -25,6 +25,7 @@ def register_routers(app: FastAPI) -> None:
     from .dictation import router as dictation_router
     from .delivery import router as delivery_router
     from .export import router as export_router
+    from .minutes import router as minutes_router
 
     app.include_router(health_router)
     app.include_router(captures_router)
@@ -39,3 +40,4 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(dictation_router)
     app.include_router(delivery_router)
     app.include_router(export_router)
+    app.include_router(minutes_router)

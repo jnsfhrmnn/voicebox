@@ -10,7 +10,7 @@ materialisiert werden (Gate: scripts/verify_schema.py).
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON
+from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 
 from ..utils.capture_chords import (
@@ -480,3 +480,78 @@ class ExportJob(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)
+
+
+class MinutesResult(Base):
+    """Versionierter Protokollauftrag fuer Meeting-Protokolle (JFW-13).
+
+    ``minutes_key`` bindet deterministisch alle Eingangsrevisionen (JFW-4-Snapshot
+    inkl. JFW-2/JFW-3/(optional) JFW-11) UND die bestaetigte Registerrevision —
+    genau ein autoritatives Ergebnis je Schluessel (Byte-Regel). ``payload_hash``
+    bindet zusaetzlich Zielidentitaet/Dateinamen. ``result_hash`` gesetzt <=>
+    atomarer Ergebnis-Commit; ``nondeterminism_revisions`` faehrt nicht
+    reproduzierbare Modellantworten als gesondert versionierte Ergebnisrevisionen
+    (NIE als zweite Fassung). Schreiben ausschliesslich ueber
+    ``services/minutes_contract.py``.
+    """
+    __tablename__ = "minutes_results"
+    id = Column(String, primary_key=True)  # uuid4
+    minutes_key = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    contract_version = Column(String, nullable=False)  # jfw13_minutes_v1
+    minutes_profile = Column(String, nullable=False)
+    register_id = Column(String, nullable=False, index=True)
+    register_revision = Column(String, nullable=False)
+    job_id = Column(String, nullable=False, index=True)
+    audio_asset_id = Column(String, nullable=False)
+    audio_hash = Column(String, nullable=False)
+    audio_duration_ms = Column(Integer, nullable=False)
+    timebase = Column(String, nullable=False)
+    transcript_run_id = Column(String, nullable=False)
+    transcript_revision_id = Column(String, nullable=False)
+    transcript_revision_hash = Column(String, nullable=False)
+    transcript_text_hash = Column(String, nullable=False)
+    jfw2_result_hash = Column(String, nullable=False)
+    jfw2_status = Column(String, nullable=False)
+    jfw3_result_hash = Column(String, nullable=False)
+    jfw3_status = Column(String, nullable=False)
+    jfw4_export_key = Column(String, nullable=False)
+    jfw4_result_hash = Column(String, nullable=False)
+    jfw11_commit_hash = Column(String, nullable=True)
+    jfw11_status = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="queued")  # Protokoll Result Contract
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    readiness = Column(JSON, nullable=True)  # Readiness inkl. Warnungen
+    warnings = Column(JSON, nullable=True)  # sichtbare Warnliste (inhaltfrei)
+    model_provenance = Column(JSON, nullable=True)  # Modell-/Artefaktprovenienz
+    document = Column(JSON, nullable=True)  # Protokolldokument jfw13_minutes_v1
+    result_hash = Column(String, nullable=True)  # gesetzt <=> autoritativer Commit
+    nondeterminism_revisions = Column(JSON, nullable=True)
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
+
+
+class PseudonymRegister(Base):
+    """Revisionierte Zuordnungsinformation (JFW-13) — getrennt vom Protokoll.
+
+    Ausdruecklich und vollstaendig loeschbar (``delete_register`` entfernt die
+    Zuordnungsinformation; Pseudonyme im Protokoll bleiben gueltig). Nie Inhalt
+    von Logs, Metriken, Crash-Dumps oder Standard-Exporten.
+    """
+    __tablename__ = "pseudonym_registers"
+    id = Column(String, primary_key=True)  # uuid4 (Zeile)
+    register_id = Column(String, nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    revision_id = Column(String, nullable=False)
+    parent_revision_id = Column(String, nullable=True)
+    minutes_key = Column(String, nullable=True, index=True)
+    status = Column(String, nullable=False)  # vorgeschlagen|bestaetigt|...|geloescht
+    entries = Column(JSON, nullable=False)  # Zuordnungsinformation (sensibel)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("register_id", "revision", name="uq_pseudonym_registers_rev"),
+    )
