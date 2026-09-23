@@ -1,6 +1,6 @@
 {
   "profile": "jf-whisper",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "baseline_commit": "7df366d0c8302c09170102b86e801a1f46fb81cc",
   "patch_ledger": [
     "2c9d02af62ff978ad33b1e9f303547b26becb079",
@@ -43,7 +43,8 @@
       "tasks",
       "alignment",
       "diarization",
-      "meeting"
+      "meeting",
+      "recording"
     ],
     "forbidden": [
       "profiles",
@@ -103,7 +104,8 @@
       "transcript_revisions",
       "alignment_results",
       "diarization_results",
-      "meeting_results"
+      "meeting_results",
+      "recording_runs"
     ],
     "forbidden": [
       "profiles",

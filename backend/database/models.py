@@ -284,3 +284,45 @@ class MeetingResult(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     terminal_at = Column(DateTime, nullable=True)
+
+
+class RecordingRun(Base):
+    """Versionierter Diktat-Aufnahme-Run mit stabiler Identität (JFW-6).
+
+    Genau eine Aufnahmeautorität (browserbasierte ``MediaRecorder``-Aufnahme);
+    diese Tabelle haertet darunter Run-Identität, Exactly-once Start/Stopp,
+    Formatbindung, Sound-Cue-Marken, Recovery-Status und den idempotenten
+    JFW-7-Handoff. ``result_hash`` gesetzt <=> atomarer Ergebnis-Commit
+    (``secured``); ``transcription_authorized`` wird genau einmal beim ersten
+    Handoff gesetzt.
+    """
+    __tablename__ = "recording_runs"
+    id = Column(String, primary_key=True)  # uuid4
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    run_id = Column(String, nullable=False, index=True)  # jfw6-run-<uuid4hex>
+    contract_version = Column(String, nullable=False)
+    device_stable_id_hash = Column(String, nullable=False)  # nie die volle Geraeteidentität
+    format = Column(JSON, nullable=False)  # tatsaechlich geoeffnetes Format
+    started_at_100ns = Column(Integer, nullable=False, default=0)
+    attempt_id = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="starting")  # Run-Zustaende
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    stop_reason = Column(String, nullable=True)  # Manifest-Stopgrund
+    stop_cause = Column(String, nullable=True)
+    stop_at_100ns = Column(Integer, nullable=True)  # genau ein angenommener Stopp-Intent
+    audio_hash = Column(String, nullable=True)
+    manifest_hash = Column(String, nullable=True)
+    result_hash = Column(String, nullable=True)  # kanonischer Manifest-/Ergebnis-Hash
+    manifest = Column(JSON, nullable=True)
+    frames = Column(JSON, nullable=True)  # Frame-Bilanz angenommen = final + Luecke
+    gaps = Column(JSON, nullable=True)
+    sound_cue_marks = Column(JSON, nullable=True)
+    recovery_status = Column(JSON, nullable=True)
+    transcription_authorized = Column(Boolean, nullable=False, default=False)
+    handoff_count = Column(Integer, nullable=False, default=0)  # genau eine Zustellung autorisiert
+    deletion_contract_hash = Column(String, nullable=True)  # gebundener Löschvertrag
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)

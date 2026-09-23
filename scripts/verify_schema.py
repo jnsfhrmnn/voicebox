@@ -260,6 +260,42 @@ def create_empty(db_path: Path) -> int:
                 ON meeting_results (job_id);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_meeting_results_identity_hash
                 ON meeting_results (identity_hash);
+            -- JFW-6 (Spec State Contract): Diktat-Aufnahme-Run mit stabiler Identität.
+            CREATE TABLE IF NOT EXISTS recording_runs (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                device_stable_id_hash TEXT NOT NULL,
+                format JSON NOT NULL,
+                started_at_100ns INTEGER NOT NULL DEFAULT 0,
+                attempt_id TEXT,
+                app_epoch TEXT,
+                status TEXT NOT NULL DEFAULT 'starting',
+                reason_code TEXT,
+                stop_reason TEXT,
+                stop_cause TEXT,
+                stop_at_100ns INTEGER,
+                audio_hash TEXT,
+                manifest_hash TEXT,
+                result_hash TEXT,
+                manifest JSON,
+                frames JSON,
+                gaps JSON,
+                sound_cue_marks JSON,
+                recovery_status JSON,
+                transcription_authorized BOOLEAN NOT NULL DEFAULT 0,
+                handoff_count INTEGER NOT NULL DEFAULT 0,
+                deletion_contract_hash TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS ix_recording_runs_run_id
+                ON recording_runs (run_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_runs_identity_hash
+                ON recording_runs (identity_hash);
             """
         )
         con.commit()
