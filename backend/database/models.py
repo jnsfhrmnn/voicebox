@@ -555,3 +555,115 @@ class PseudonymRegister(Base):
     __table_args__ = (
         UniqueConstraint("register_id", "revision", name="uq_pseudonym_registers_rev"),
     )
+
+
+# ── JFW-5: Batch-Auftragsmodell (Batch-Result / Batch-Item Contract) ──────
+# ``batches`` traegt GENAU EINE unveraenderliche Snapshot-Revision je Zeile
+# (``identity_hash`` UNIQUE + ``payload_hash`` fail-closed); ``batch_items``
+# bindet jedes Element an Quell-, Profil- und Snapshotrevision samt
+# autoritativer Ergebnisreferenzen; ``batch_attempts`` fuehrt je Element die
+# nachvollziehbaren Versuche inklusive ``interrupted`` (fortsetzbar, nie
+# fachlicher Erfolg). Schreiben ausschliesslich ueber
+# ``services/batch_contract.py``.
+
+#: Verbindliche Batch-Zustaende (Spec „Batch Result Contract").
+BATCH_STATUSES = (
+    "draft", "validating", "ready", "running", "pausing", "paused",
+    "completed", "completed_with_issues", "canceled", "blocked",
+)
+#: Element-Endzustaende je aktuellem Versuch (Spec „Batch Item Contract").
+ITEM_END_STATES = (
+    "succeeded", "succeeded_with_warnings", "failed", "canceled",
+    "blocked", "interrupted", "invalidated",
+)
+
+
+class Batch(Base):
+    """Unveraenderliche Snapshot-Revision eines bestaetigten Batches (JFW-5)."""
+    __tablename__ = "batches"
+    id = Column(String, primary_key=True)  # uuid4 (Zeile)
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    batch_id = Column(String, nullable=False, index=True)  # jfw5-batch-<uuid4hex>
+    contract_version = Column(String, nullable=False)  # jfw5_batch_v1
+    revision_no = Column(Integer, nullable=False, default=1)
+    parent_snapshot_hash = Column(String, nullable=True)
+    snapshot_hash = Column(String, nullable=False, index=True)
+    snapshot = Column(JSON, nullable=False)  # eingefrorene Auswahl + Quellen
+    profile = Column(JSON, nullable=False)  # eingefrorene gemeinsame Profilrevision
+    profile_hash = Column(String, nullable=False)
+    phases = Column(JSON, nullable=False)  # bestaetigte Phasenreihenfolge
+    partial_failure_policy = Column(String, nullable=False)
+    resource_policy = Column(JSON, nullable=False)  # jfw5_serial_v1
+    output_policy = Column(JSON, nullable=False)
+    frozen_order = Column(JSON, nullable=False)  # eingefrorene Reihenfolge
+    status = Column(String, nullable=False, default="ready")  # BATCH_STATUSES
+    reason_code = Column(String, nullable=True)  # versioniert, inhaltsfrei
+    app_epoch = Column(String, nullable=True)
+    aggregates = Column(JSON, nullable=True)  # abgeleitete Uebersicht (nie Autoritaet)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
+
+
+class BatchItem(Base):
+    """Batch-Element mit Quell-/Profilbindung und autoritativen Ergebnisreferenzen.
+
+    ``result_refs`` haelt ausschliesslich Referenzen (identity/result hash) auf
+    die Commits der gebundenen Feature-Vertraege — kein Batchfehler loescht
+    einen gueltigen Elementcommit.
+    """
+    __tablename__ = "batch_items"
+    id = Column(String, primary_key=True)  # uuid4 (Zeile)
+    identity_hash = Column(String, nullable=False, unique=True, index=True)
+    payload_hash = Column(String, nullable=False)
+    batch_identity_hash = Column(String, nullable=False, index=True)
+    batch_id = Column(String, nullable=False, index=True)
+    snapshot_hash = Column(String, nullable=False)
+    item_id = Column(String, nullable=False, index=True)  # jfw5-item-<16hex>
+    order_index = Column(Integer, nullable=False)
+    source = Column(JSON, nullable=False)  # Quellenidentitaet + Inhaltsnachweis
+    relative_path = Column(String, nullable=False)
+    selection_refs = Column(JSON, nullable=False)
+    profile_hash = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="waiting")  # ITEM_END_STATES | waiting|active
+    current_phase = Column(String, nullable=True)
+    phases = Column(JSON, nullable=True)  # Phasenzustaende des aktuellen Versuchs
+    result_refs = Column(JSON, nullable=True)  # autoritative Ergebnisreferenzen je Phase
+    warnings = Column(JSON, nullable=True)
+    output = Column(JSON, nullable=True)  # deterministische Zielzuordnung
+    attempt_count = Column(Integer, nullable=False, default=0)
+    reason_code = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
+
+
+class BatchAttempt(Base):
+    """Einzelner Verarbeitungsversuch eines Batch-Elements (JFW-5).
+
+    Stabile Versuch-ID, Start-/Endstatus inklusive ``interrupted``,
+    Eingangsrevisionen, wiederverwendete Commits und konkreter Fehler-/
+    Abbruchgrund. UNIQUE (batch, item, Versuchsnummer) verhindert doppelte
+    Versuche bei konkurrierender Finalisierung/Cancel.
+    """
+    __tablename__ = "batch_attempts"
+    id = Column(String, primary_key=True)  # uuid4 (Zeile)
+    attempt_id = Column(String, nullable=False, unique=True, index=True)  # jfw5-attempt-<uuid4hex>
+    batch_identity_hash = Column(String, nullable=False, index=True)
+    batch_id = Column(String, nullable=False, index=True)
+    item_id = Column(String, nullable=False, index=True)
+    attempt_no = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="active")  # active|pending|...|terminal
+    input_revisions = Column(JSON, nullable=True)  # Quell-/Profil-/Snapshotrevision
+    reused_commits = Column(JSON, nullable=True)  # wiederverwendete autoritative Commits
+    phase_states = Column(JSON, nullable=True)
+    reason_code = Column(String, nullable=True)
+    app_epoch = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    terminal_at = Column(DateTime, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("batch_identity_hash", "item_id", "attempt_no",
+                         name="uq_batch_attempts_item_no"),
+    )

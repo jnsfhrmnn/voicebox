@@ -479,6 +479,100 @@ def create_empty(db_path: Path) -> int:
                 ON pseudonym_registers (minutes_key);
             CREATE UNIQUE INDEX IF NOT EXISTS uq_pseudonym_registers_rev
                 ON pseudonym_registers (register_id, revision);
+            -- JFW-5: unveraenderliche Batch-Snapshot-Revisionsauftraege.
+            CREATE TABLE IF NOT EXISTS batches (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                revision_no INTEGER NOT NULL,
+                parent_snapshot_hash TEXT,
+                snapshot_hash TEXT NOT NULL,
+                snapshot JSON NOT NULL,
+                profile JSON NOT NULL,
+                profile_hash TEXT NOT NULL,
+                phases JSON NOT NULL,
+                partial_failure_policy TEXT NOT NULL,
+                resource_policy JSON NOT NULL,
+                output_policy JSON NOT NULL,
+                frozen_order JSON NOT NULL,
+                status TEXT NOT NULL,
+                reason_code TEXT,
+                app_epoch TEXT,
+                aggregates JSON,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_batches_identity_hash
+                ON batches (identity_hash);
+            CREATE INDEX IF NOT EXISTS ix_batches_batch_id
+                ON batches (batch_id);
+            CREATE INDEX IF NOT EXISTS ix_batches_snapshot_hash
+                ON batches (snapshot_hash);
+            -- JFW-5: Elemente mit Quell-/Profilbindung und Ergebnisreferenzen.
+            CREATE TABLE IF NOT EXISTS batch_items (
+                id TEXT PRIMARY KEY,
+                identity_hash TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                batch_identity_hash TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                snapshot_hash TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                order_index INTEGER NOT NULL,
+                source JSON NOT NULL,
+                relative_path TEXT NOT NULL,
+                selection_refs JSON NOT NULL,
+                profile_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                current_phase TEXT,
+                phases JSON,
+                result_refs JSON,
+                warnings JSON,
+                output JSON,
+                attempt_count INTEGER NOT NULL,
+                reason_code TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_batch_items_identity_hash
+                ON batch_items (identity_hash);
+            CREATE INDEX IF NOT EXISTS ix_batch_items_batch_identity_hash
+                ON batch_items (batch_identity_hash);
+            CREATE INDEX IF NOT EXISTS ix_batch_items_batch_id
+                ON batch_items (batch_id);
+            CREATE INDEX IF NOT EXISTS ix_batch_items_item_id
+                ON batch_items (item_id);
+            -- JFW-5: nachvollziehbare Versuche inklusive interrupted.
+            CREATE TABLE IF NOT EXISTS batch_attempts (
+                id TEXT PRIMARY KEY,
+                attempt_id TEXT NOT NULL,
+                batch_identity_hash TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                attempt_no INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                input_revisions JSON,
+                reused_commits JSON,
+                phase_states JSON,
+                reason_code TEXT,
+                app_epoch TEXT,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                terminal_at TIMESTAMP
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_batch_attempts_attempt_id
+                ON batch_attempts (attempt_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_batch_attempts_item_no
+                ON batch_attempts (batch_identity_hash, item_id, attempt_no);
+            CREATE INDEX IF NOT EXISTS ix_batch_attempts_batch_identity_hash
+                ON batch_attempts (batch_identity_hash);
+            CREATE INDEX IF NOT EXISTS ix_batch_attempts_batch_id
+                ON batch_attempts (batch_id);
+            CREATE INDEX IF NOT EXISTS ix_batch_attempts_item_id
+                ON batch_attempts (item_id);
             """
         )
         con.commit()

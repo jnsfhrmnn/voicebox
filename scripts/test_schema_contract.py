@@ -43,6 +43,9 @@ ALLOWED_TABLES = {
     "export_jobs",
     "minutes_results",
     "pseudonym_registers",
+    "batches",
+    "batch_items",
+    "batch_attempts",
 }
 FORBIDDEN_COLS = {
     "auto_refine", "llm_model", "smart_cleanup", "self_correction",
@@ -151,7 +154,7 @@ with new_engine.connect() as conn4:
 print(f"[S4] Alembic-Head: {head}")
 for k, v in meta:
     print(f"     schema_meta[{k}] = {v[:80]}{'...' if len(v) > 80 else ''}")
-assert head == "b7c9e1a3f5d8", f"S4 Head falsch: {head}"
-# S4: Alembic-Head = b7c9e1a3f5d8 (JFW-13 minutes_results/pseudonym_registers)
+assert head == "d8e4c2b1a6f7", f"S4 Head falsch: {head}"
+# S4: Alembic-Head = d8e4c2b1a6f7 (JFW-5 batches/batch_items/batch_attempts)
 
 print("\nALLE S1-S4 GRUEN")

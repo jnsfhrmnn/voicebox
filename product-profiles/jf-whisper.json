@@ -48,7 +48,8 @@
       "dictation",
       "delivery",
       "export",
-      "minutes"
+      "minutes",
+      "batch"
     ],
     "forbidden": [
       "profiles",
@@ -103,7 +104,8 @@
     "JFW-7: genau ein unveraendertes Rohtranskript (JFW-9-Verbot: kein Text-LLM, kein Refinement, NIE). STT-Modellprofil jfw7-dictate-v1 (openai/whisper-large-v3-turbo, Lizenz MIT, Base-Linie Apache-2.0) ausschliesslich ueber bewussten Download mit Installationsmanifest; Decode fest task=transcribe (translate unerreichbar).",
     "JFW-8: sichere appuebergreifende Zieluebergabe — genau ein automatischer Einfuegeversuch pro Operation (Exactly-once-Budget), Zielbindung ueber Verbundidentitaet mit Verifikations-Doppelauslosung und Scroll-Lock-Vertrag, Recovery-Queue benutzergebunden und begrenzt mit inhaltsfreiem Tombstone; Fehlerpfad-Spuren ohne Rohtext/Clipboard/Fenstertitel/Credential.",
     "JFW-4: verlustfreies JSON jfw4_export_v1 als Set-Autoritaet (Pflichtbestandteil jedes Sets mit SRT/VTT) und Downstream-Eingangsautoritaet fuer JFW-13; byteidentisch bei Snapshot-Gleichheit, Export-Schluessel ohne Zielbindung, atomarer Set-Commit ueber Attempt-Tempdateien, unbestaetigte Namen bleiben neutrale Annotation.",
-    "JFW-13: lokales Sprachmodell (Modellklasse meeting-minutes-llm, Qwen/Qwen2.5-7B-Instruct, Apache-2.0) wirkt ausschliesslich auf abgeleiteten Protokolldokumenten (Aufgaben/Zusammenfassung/Transkript-Pseudonymisierung); die JFW-9-Grenze fuer das autoritative Rohtranskript bleibt unangetastet. Pseudonymregister pseudonym_v1 ist getrennt und vollstaendig loeschbar."
+    "JFW-13: lokales Sprachmodell (Modellklasse meeting-minutes-llm, Qwen/Qwen2.5-7B-Instruct, Apache-2.0) wirkt ausschliesslich auf abgeleiteten Protokolldokumenten (Aufgaben/Zusammenfassung/Transkript-Pseudonymisierung); die JFW-9-Grenze fuer das autoritative Rohtranskript bleibt unangetastet. Pseudonymregister pseudonym_v1 ist getrennt und vollstaendig loeschbar.",
+    "JFW-5: Stapelverarbeitung nur als bestaetigte Momentaufnahme — unveraenderlicher Batch-Snapshot mit Inhaltsnachweis content_proof_v1 (ohne realpath, Reparse Points nie gefolgt), eine eingefrorene Profilrevision je Batch, ressourcensichere Serie (jfw5_serial_v1) mit Diktatvorrang, phasenweise autoritative Commits und Retry/Resume ohne Verlust gesicherter Ergebnisse; bewusst KEINE Ordnerueberwachung, kein Download, kein Cloud-Fallback."
   ],
   "database_tables": {
     "active": [
@@ -119,7 +121,10 @@
       "delivery_operations",
       "export_jobs",
       "minutes_results",
-      "pseudonym_registers"
+      "pseudonym_registers",
+      "batches",
+      "batch_items",
+      "batch_attempts"
     ],
     "forbidden": [
       "profiles",
