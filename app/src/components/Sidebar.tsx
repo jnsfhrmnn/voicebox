@@ -1,5 +1,5 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
-import { Box, Captions, Settings } from 'lucide-react';
+import { Box, Captions, ListChecks, Settings } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -23,6 +23,7 @@ const tabs: Array<{
   label?: string;
 }> = [
   { id: 'captures', path: '/captures', icon: Captions, labelKey: 'nav.captures' },
+  { id: 'jobs', path: '/jobs', icon: ListChecks, label: 'Vorgänge' },
   { id: 'models', path: '/models', icon: Box, labelKey: 'nav.models' },
   { id: 'settings', path: '/settings', icon: Settings, labelKey: 'nav.settings' },
 ];

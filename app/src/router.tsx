@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router';
 import { AppFrame } from '@/components/AppFrame/AppFrame';
 import { CapturesTab } from '@/components/CapturesTab/CapturesTab';
+import { JfwWorkspace } from '@/components/JfwWorkspace/JfwWorkspace';
 import { ModelsTab } from '@/components/ModelsTab/ModelsTab';
 import { AboutPage } from '@/components/ServerTab/AboutPage';
 import { CapturesPage } from '@/components/ServerTab/CapturesPage';
@@ -64,6 +65,13 @@ const capturesRoute = createRoute({
   component: CapturesTab,
 });
 
+
+// JFW-Folge-Block: Bedienoberflaechen der Vertraege JFW-2 … JFW-13
+const jobsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/jobs',
+  component: JfwWorkspace,
+});
 
 // Models route
 const modelsRoute = createRoute({
@@ -126,6 +134,7 @@ const serverRedirectRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   capturesRoute,
+  jobsRoute,
   modelsRoute,
   settingsRoute.addChildren([
     settingsGeneralRoute,
