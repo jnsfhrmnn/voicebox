@@ -69,13 +69,22 @@ fn is_allowed(path: &str, allowlist: &[&str]) -> bool {
 }
 
 /// Pfad-Validierung: nur relative Routenpfade, keine absoluten URLs, keine
-/// Whitespace/Backslash-Injection in die reqwest-URL.
+/// Whitespace/Backslash-Injection in die reqwest-URL. USCRX-2026-16007/P-03:
+/// auch prozentkodierte Traversierung (%2e/%2f/%5c) wird verweigert — sonst
+/// überlebt `../` als `%2e%2e` die Segmentprüfung.
 fn is_valid_path(path: &str) -> bool {
-    path.starts_with('/')
+    if !(path.starts_with('/')
         && !path.contains(' ')
         && !path.contains("\\")
-        && !path.contains("://")
-        && !path.split('?').next().unwrap_or(path).split('/').any(|seg| seg == "." || seg == "..")
+        && !path.contains("://"))
+    {
+        return false;
+    }
+    let lowered = path.to_ascii_lowercase();
+    if lowered.contains("%2e") || lowered.contains("%2f") || lowered.contains("%5c") {
+        return false;
+    }
+    !path.split('?').next().unwrap_or(path).split('/').any(|seg| seg == "." || seg == "..")
 }
 
 struct Session {
@@ -331,4 +340,31 @@ pub async fn sidecar_stream(
 struct HandshakeProbe {
     #[allow(dead_code)]
     port: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// USCRX-2026-16007/P-03: Negativtest zur Caller-Prüfung — `check_caller`
+    /// lehnt im ersten Gate (`is_valid_path`) mit `Err` ab; rohe UND
+    /// prozentkodierte Traversierung muss dort scheitern.
+    #[test]
+    fn traversal_paths_are_rejected() {
+        assert!(!is_valid_path("/captures/../minutes/x"));
+        assert!(!is_valid_path("/captures/%2e%2e/minutes/x"));
+        assert!(!is_valid_path("/captures/%2E%2E/minutes/x"));
+        assert!(!is_valid_path("/captures/%2e%2e%2fminutes/x"));
+        assert!(!is_valid_path("/captures/.%2e/minutes/x"));
+        assert!(!is_valid_path("https://evil.example/x"));
+        assert!(is_valid_path("/captures/abc/minutes"));
+        assert!(is_valid_path("/captures?limit=50"));
+    }
+
+    #[test]
+    fn allowlist_matches_segment_boundaries() {
+        assert!(is_allowed("/captures", &["/captures"]));
+        assert!(is_allowed("/captures/abc/audio", &["/captures"]));
+        assert!(!is_allowed("/capturesx", &["/captures"]));
+    }
 }

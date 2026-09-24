@@ -114,8 +114,6 @@ def verify_snapshot_completeness(snapshot: dict) -> list[str]:
                 errors.append(f"quelle_fehlt:{key}")
         if "content_proof" in source and not str(source["content_proof"]).startswith("sha256:"):
             errors.append("inhaltsnachweis_unbekannt")
-        if item.get("item_id") != element_id({"path": source.get("path_key") or source.get("path", "")}):
-            pass  # Pfad-Key-basierte ID; Detailpruefung in den Identitaetstests
     if snapshot["order"] != [i["item_id"] for i in snapshot["items"]]:
         errors.append("reihenfolge_ungleich_elementen")
     return errors

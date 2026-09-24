@@ -201,23 +201,39 @@ def apply_action(register: dict, action: dict) -> dict:
     """Nutzeraktion erzeugt eine neue, nachvollziehbare Registerrevision."""
     kind = action.get("kind")
     entries = [dict(e) for e in register["entries"]]
+    known_ids = {e["entry_id"] for e in entries}
+
+    def _target_id() -> str:
+        # USCRX-2026-16007/RL-16: Vertrags-Validierung — fehlende oder fremde
+        # Ziele sind Fehler, keine stillen No-Op-Revisionen.
+        entry_id = action.get("entry_id")
+        if not entry_id or entry_id not in known_ids:
+            raise ValueError("entry_id_unbekannt")
+        return entry_id
 
     if kind == "bestaetigen":
+        _target_id()
         for entry in entries:
             if entry["entry_id"] == action.get("entry_id"):
                 entry["state"] = STATE_BESTAETIGT
     elif kind == "umbenennen":
+        _target_id()
+        if not isinstance(action.get("pseudonym"), str) or not action.get("pseudonym").strip():
+            raise ValueError("pseudonym_fehlt")
         for entry in entries:
             if entry["entry_id"] == action.get("entry_id"):
                 entry["state"] = STATE_UMBENANNT
                 entry["pseudonym"] = action.get("pseudonym")
                 entry["provenance"] = {"herkunft": "manuell"}
     elif kind == "nicht_ersetzbar":
+        _target_id()
         for entry in entries:
             if entry["entry_id"] == action.get("entry_id"):
                 entry["state"] = STATE_NICHT_ERSATZBAR
     elif kind == "zusammenlegen":
         wanted = list(action.get("entry_ids") or [])
+        if len(wanted) < 2 or any(w not in known_ids for w in wanted):
+            raise ValueError("entry_ids_ungueltig")
         keep = None
         merged = []
         for entry in entries:
@@ -299,7 +315,13 @@ def consistency_errors(register: dict) -> list[str]:
 
 
 def assert_content_free(payload: dict) -> None:
-    """Zuordnungen/Namen duerfen nie in Logs, Metriken oder Crash-Dumps."""
+    """Zuordnungen/Namen duerfen nie in Logs, Metriken oder Crash-Dumps.
+
+    Hinweis (USCRX-2026-16007/RL-08, ehrlich formuliert): Der Guard ist NOCH
+    NICHT durchgaengig in die Produktivpfade der minutes/delivery-Services
+    verdrahtet — die Garantie gilt bis zur Verdrahtung (Follow-Up) NUR fuer
+    Aufrufer, die ihn explizit einsetzen, und wird nicht durchgaengig erzwungen.
+    """
     for key in FORBIDDEN_CONTENT_KEYS:
         if key in payload:
             raise ValueError(f"inhalt_im_log:{key}")

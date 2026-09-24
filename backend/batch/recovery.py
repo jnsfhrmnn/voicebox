@@ -16,7 +16,12 @@ ACTIVE_ATTEMPT_STATES = ("active", "running", "pending")
 
 
 def mark_interrupted(attempts: list[dict], *, current_epoch: str) -> list[dict]:
-    """Markiert nicht terminale Versuche ``interrupted`` (idempotent, append-klar)."""
+    """Markiert nicht terminale Versuche ``interrupted`` (idempotent, append-klar).
+
+    ``current_epoch`` wird als ``interrupted_at_epoch`` auf die markierten
+    Versuche geschrieben (USCRX-2026-16007/P-02): der Parameter war bisher
+    ungenutzt und vermittelte einen Vertrag, den der Code nicht hielt.
+    """
     out = []
     for attempt in attempts:
         a = dict(attempt)
@@ -24,6 +29,7 @@ def mark_interrupted(attempts: list[dict], *, current_epoch: str) -> list[dict]:
             a["status"] = "interrupted"
             a["reason_code"] = "unterbrochen"
             a["resumable"] = True
+            a["interrupted_at_epoch"] = current_epoch
         elif a.get("status") != "interrupted":
             a["resumable"] = False
         out.append(a)
