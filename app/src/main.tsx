@@ -6,12 +6,16 @@ import App from './App';
 import './i18n';
 import './index.css';
 import { queryClient } from './lib/queryClient';
+import { PlatformProvider } from './platform/PlatformContext';
+import { createTauriPlatform } from './platform/tauriPlatform';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
+    <PlatformProvider platform={createTauriPlatform()}>
+      <QueryClientProvider client={queryClient}>
+        <App />
       {/* <ReactQueryDevtools initialIsOpen={false} /> */}
-    </QueryClientProvider>
+      </QueryClientProvider>
+    </PlatformProvider>
   </React.StrictMode>,
 );

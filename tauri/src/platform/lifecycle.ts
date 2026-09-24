@@ -50,7 +50,7 @@ class TauriLifecycle implements PlatformLifecycle {
       // keep_running_on_close-Option existiert nicht mehr. Wir geben den Close nur
       // noch frei; der graceful HTTP-Stopp bleibt als sauberes Verabschieden.
       await listen<null>('window-close-requested', async () => {
-        // @ts-expect-error - accessing module-level variable from another module
+        // @ts-ignore - accessing module-level variable from another module
         const serverStartedByApp = window.__voiceboxServerStartedByApp ?? false;
 
         console.log('[lifecycle] window-close-requested: serverStartedByApp=%s', serverStartedByApp);

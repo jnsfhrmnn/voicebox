@@ -85,6 +85,13 @@ keytap = "0.4"
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem
 custom-protocol = ["tauri/custom-protocol"]
+# JFW-Boot-Reparatur: `tauri build` setzt tauri/custom-protocol nur selbst
+# (CLI-Feature). Ein reines `cargo build --release` landet sonst im Tauri-
+# Dev-Modus (generate_context! backt dev=true ein) und das Fenster laedt die
+# Dev-URL http://localhost:5173 statt der eingebetteten Frontend-Dist. Daher
+# ist custom-protocol hier Default. Dev-Loop mit laufendem Vite-Server:
+# `cargo run --no-default-features`.
+default = ["custom-protocol"]
 
 [dev-dependencies]
 minisign = "0.9"
