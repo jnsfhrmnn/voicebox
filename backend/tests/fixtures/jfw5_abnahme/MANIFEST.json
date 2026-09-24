@@ -1,0 +1,231 @@
+{
+  "content_proof_contract": "content_proof_v1",
+  "created_at": "2026-09-24",
+  "datenschutz": "synthetisch und inhaltsfrei: digitale Signalmarker auf digitaler Stille, keine Sprache, keine echten Aufnahmen, kein Personenbezug",
+  "files": [
+    {
+      "beschreibung": "Zwei Signalmarker, 8 kHz mono",
+      "channels": 1,
+      "duration_ms": 600,
+      "markers": [
+        {
+          "end_ms": 240,
+          "index": 0,
+          "start_ms": 100
+        },
+        {
+          "end_ms": 490,
+          "index": 1,
+          "start_ms": 350
+        }
+      ],
+      "name": "q01_8k_mono_0k6_m2.wav",
+      "sample_rate_hz": 8000,
+      "sample_width_bytes": 2,
+      "sha256": "795200d4840933fb34ff2d5c3952bd53466c21e3e2dadcec17e16d8810057bd7",
+      "size_bytes": 9644,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    },
+    {
+      "beschreibung": "Drei Signalmarker, 16 kHz mono",
+      "channels": 1,
+      "duration_ms": 1000,
+      "markers": [
+        {
+          "end_ms": 280,
+          "index": 0,
+          "start_ms": 150
+        },
+        {
+          "end_ms": 580,
+          "index": 1,
+          "start_ms": 450
+        },
+        {
+          "end_ms": 880,
+          "index": 2,
+          "start_ms": 750
+        }
+      ],
+      "name": "q02_16k_mono_1k0_m3.wav",
+      "sample_rate_hz": 16000,
+      "sample_width_bytes": 2,
+      "sha256": "6fd94f68e61f78c7642368a5022fbb8350bb880dba11e3778d990ea9525c8cb4",
+      "size_bytes": 32044,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    },
+    {
+      "beschreibung": "Zwei Signalmarker, 44,1 kHz stereo (anderer Container)",
+      "channels": 2,
+      "duration_ms": 800,
+      "markers": [
+        {
+          "end_ms": 260,
+          "index": 0,
+          "start_ms": 120
+        },
+        {
+          "end_ms": 640,
+          "index": 1,
+          "start_ms": 500
+        }
+      ],
+      "name": "q03_44k_stereo_0k8_m2.wav",
+      "sample_rate_hz": 44100,
+      "sample_width_bytes": 2,
+      "sha256": "52d2eb6df9cf13e6964a60cc9e9020ae54afcc52798874a6209642d2ac9d73c1",
+      "size_bytes": 141164,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    },
+    {
+      "beschreibung": "Vier Signalmarker, laengste Quelle des Satzes",
+      "channels": 1,
+      "duration_ms": 1200,
+      "markers": [
+        {
+          "end_ms": 220,
+          "index": 0,
+          "start_ms": 100
+        },
+        {
+          "end_ms": 470,
+          "index": 1,
+          "start_ms": 350
+        },
+        {
+          "end_ms": 720,
+          "index": 2,
+          "start_ms": 600
+        },
+        {
+          "end_ms": 970,
+          "index": 3,
+          "start_ms": 850
+        }
+      ],
+      "name": "q04_8k_mono_1k2_m4.wav",
+      "sample_rate_hz": 8000,
+      "sample_width_bytes": 2,
+      "sha256": "a55c4e3abd98668de51034015a17136398e4225a3362db295aab69c43816d3ed",
+      "size_bytes": 19244,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    },
+    {
+      "beschreibung": "Zwei Signalmarker, kuerzeste Quelle des Satzes",
+      "channels": 1,
+      "duration_ms": 500,
+      "markers": [
+        {
+          "end_ms": 200,
+          "index": 0,
+          "start_ms": 80
+        },
+        {
+          "end_ms": 420,
+          "index": 1,
+          "start_ms": 300
+        }
+      ],
+      "name": "q05_16k_mono_0k5_m2.wav",
+      "sample_rate_hz": 16000,
+      "sample_width_bytes": 2,
+      "sha256": "7f6efff88a92c705f90f1ccd435adf58f6cf85ce35d4f8efed831795bb043cc0",
+      "size_bytes": 16044,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    },
+    {
+      "beschreibung": "Drei Marker, Marker 2 im Plan als unscharf (unaligned) deklariert -> Teilqualitaet in beiden Laufarten",
+      "channels": 1,
+      "duration_ms": 900,
+      "markers": [
+        {
+          "end_ms": 240,
+          "index": 0,
+          "start_ms": 100
+        },
+        {
+          "end_ms": 540,
+          "index": 1,
+          "start_ms": 400
+        },
+        {
+          "end_ms": 840,
+          "index": 2,
+          "start_ms": 700
+        }
+      ],
+      "name": "q06_8k_mono_0k9_m3_partial.wav",
+      "sample_rate_hz": 8000,
+      "sample_width_bytes": 2,
+      "sha256": "3874adeab8c8e710cad0190e051087f97fb69cbac60213f678e8bf5eba697dd4",
+      "size_bytes": 14444,
+      "token": "signalmarke",
+      "unaligned_marker_indices": [
+        1
+      ]
+    },
+    {
+      "beschreibung": "Zwei Signalmarker, 44,1 kHz mono",
+      "channels": 1,
+      "duration_ms": 700,
+      "markers": [
+        {
+          "end_ms": 300,
+          "index": 0,
+          "start_ms": 150
+        },
+        {
+          "end_ms": 600,
+          "index": 1,
+          "start_ms": 450
+        }
+      ],
+      "name": "q07_44k_mono_0k7_m2.wav",
+      "sample_rate_hz": 44100,
+      "sample_width_bytes": 2,
+      "sha256": "b97df0d69b2c58c4c58fb310f120c4f4be3be6587346fa87764b8a1f3568e0db",
+      "size_bytes": 61784,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    },
+    {
+      "beschreibung": "Drei Signalmarker, 16 kHz mono",
+      "channels": 1,
+      "duration_ms": 1100,
+      "markers": [
+        {
+          "end_ms": 260,
+          "index": 0,
+          "start_ms": 120
+        },
+        {
+          "end_ms": 590,
+          "index": 1,
+          "start_ms": 450
+        },
+        {
+          "end_ms": 940,
+          "index": 2,
+          "start_ms": 800
+        }
+      ],
+      "name": "q08_16k_mono_1k1_m3.wav",
+      "sample_rate_hz": 16000,
+      "sample_width_bytes": 2,
+      "sha256": "f7c4cd1216026655433de659feec9ad29ee58ac58ea7fb979a669a0e66bd669c",
+      "size_bytes": 35244,
+      "token": "signalmarke",
+      "unaligned_marker_indices": []
+    }
+  ],
+  "generator": "generate_korpus.py (ganzzahlige Rechteck-Marker, deterministisch)",
+  "korpus_id": "jfw5-abnahme-korpus",
+  "korpus_revision": "jfw5-abnahme-korpus-v1",
+  "quellformat": "RIFF/WAVE PCM16 (unterstuetzt laut backend/batch/discovery.py)",
+  "verwendung": "gefrorener Abnahmesatz fuer den Einzel-vs.-Batch-Vergleich (backend/tests/test_einzel_vs_batch_abnahme.py); der Markerplan ist die synthetische Referenz der akustischen Zielsystem-Seams"
+}
