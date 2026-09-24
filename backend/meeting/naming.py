@@ -15,7 +15,7 @@ Kalibrierungsprotokoll mit dem Referenzkorpus nicht eingefroren ist, gilt
 """
 from __future__ import annotations
 
-import uuid
+from ..minutes.provenance import canonical_hash
 
 NAME_MAPPING_CONTRACT_VERSION = "name_mapping_v1"
 
@@ -38,12 +38,15 @@ def _revision(base: dict, *, state: str, **overrides) -> dict:
     rev.update(
         {
             "contract_version": NAME_MAPPING_CONTRACT_VERSION,
-            "mapping_id": uuid.uuid4().hex,
             "state": state,
             "status": STATUS_PROPOSED if state == STATE_SUGGESTED else state,
         }
     )
     rev.update(overrides)
+    # USCRX-2026-16006 (RL-06): mapping_id inhaltsdeterministisch (Prefix + Hash,
+    # Vorbild minutes/pseudonym.py) — identische Eingaben muessen laut JFW-4
+    # byteidentische Exporte ergeben (Byte-Regel); uuid4 brach das.
+    rev["mapping_id"] = "map_" + canonical_hash(rev)[:24]
     return rev
 
 

@@ -14,7 +14,7 @@ wiederverwendbare Sprechermerkmale aus). Entscheidungsdatensätze sind inhaltsfr
 """
 from __future__ import annotations
 
-import uuid
+from ..minutes.provenance import canonical_hash
 
 DEDUPE_CONTRACT_VERSION = "dedupe_annotation_v1"
 
@@ -85,9 +85,8 @@ def make_decision(
     user_action: str | None = None,
 ) -> dict:
     """Inhaltsfreier, revisionsgebundener Entscheidungsdatensatz."""
-    return {
+    decision = {
         "contract_version": DEDUPE_CONTRACT_VERSION,
-        "decision_id": uuid.uuid4().hex,
         "ref_a": dict(ref_a),
         "ref_b": dict(ref_b),
         "state": state,
@@ -97,6 +96,11 @@ def make_decision(
         "parent_revision": parent_revision,
         "user_action": user_action,
     }
+    # USCRX-2026-16006 (RL-06): decision_id inhaltsdeterministisch (Prefix + Hash,
+    # Vorbild minutes/pseudonym.py) — Byte-Regel JFW-4: identische Eingaben
+    # muessen identische Bytes ergeben; uuid4 brach Wiederholungen.
+    decision["decision_id"] = "dec_" + canonical_hash(decision)[:24]
+    return decision
 
 
 def build_combined_contributions(contributions: list[dict]) -> list[dict]:

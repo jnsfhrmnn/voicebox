@@ -8,6 +8,8 @@ Ueberlappende Erkennungen werden nie geraten, sondern sichtbar gemarkt.
 """
 from __future__ import annotations
 
+import re
+
 from .pseudonym import (
     KIND_KONTAKT,
     KIND_LINK,
@@ -18,6 +20,12 @@ from .pseudonym import (
 )
 
 REMOVED_MARKER = "[entfernt]"
+#: USCRX-2026-16006 (RL-04): sichtbare Reststelle — keine Anonymitaet behauptet.
+RESTE_MARKER = "[Reststelle]"
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
 
 
 def _replacement_for(entry: dict) -> str | None:
@@ -89,21 +97,47 @@ def redact_text(text: str, plan: list[dict], offset: int = 0) -> str:
 
 
 def redact_free_text(text: str, register: dict) -> str:
-    """Anonymisierung freier Texte (Aufgaben/Zusammenfassung) ueber Klartextersatz."""
+    """Anonymisierung freier Texte (Aufgaben/Zusammenfassung) — wortgrenzengenau.
+
+    Sofortstand (USCRX-2026-16006/RL-04): Ganze Woerter werden ersetzt
+    (Schreibvarianten inklusive, laengste zuerst); Woerter, die einen
+    Registerbegriff nur als Teilwort tragen, werden NICHT verstümmelt
+    (nie „Person 1mann"), sondern als Reststelle SICHTBAR gemarkt — es wird
+    keine volle Anonymitaet behauptet. Zielloesung (separat): spanbasierte
+    Redaktion der Freitext-Generierungen ueber Register-Spans.
+    """
     if not text:
         return text
-    out = text
-    replacements: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str]] = []
     for entry in register.get("entries") or []:
         original = entry.get("original_text")
         replacement = _replacement_for(entry)
         if original and replacement:
-            replacements.append((original, replacement))
+            pairs.append((original, replacement))
     # laengste Fundstellen zuerst (z. B. „Erika Muster" vor „Muster")
-    replacements.sort(key=lambda pair: len(pair[0]), reverse=True)
-    for original, replacement in replacements:
-        out = out.replace(original, replacement)
-    return out
+    pairs.sort(key=lambda pair: len(pair[0]), reverse=True)
+
+    # Phase 1: ganze Woerter ersetzen (Schreibvarianten wie „muster" inklusive).
+    out = text
+    for original, replacement in pairs:
+        word_pat = re.compile(r"(?<!\w)" + re.escape(original) + r"(?!\w)", re.IGNORECASE)
+        out = word_pat.sub(replacement, out)
+
+    # Phase 2: Reste — Woerter mit Registerbegriff als Teilwort sichtbar markieren.
+    marked = out
+    for original, _ in pairs:
+        part_pat = re.compile(re.escape(original), re.IGNORECASE)
+        spans: set[tuple[int, int]] = set()
+        for m in part_pat.finditer(marked):
+            start, end = m.start(), m.end()
+            while start > 0 and _is_word_char(marked[start - 1]):
+                start -= 1
+            while end < len(marked) and _is_word_char(marked[end]):
+                end += 1
+            spans.add((start, end))
+        for start, end in sorted(spans, reverse=True):
+            marked = marked[:start] + RESTE_MARKER + marked[end:]
+    return marked
 
 
 def reident_hinweise(register: dict) -> list[dict]:
