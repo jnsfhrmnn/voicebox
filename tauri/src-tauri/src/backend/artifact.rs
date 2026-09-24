@@ -640,6 +640,13 @@ impl Manager {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/// Artefakt-Gate (USCRX-2026-16036): Nur echte Binär-Artefakte sind startbar.
+/// Der ~512-B-Platzhalter von setup-dev-sidecar.js ist nicht ausführbar; jede
+/// Auflösungsstufe der Sidecar-Binary (CPU wie CUDA) verlangt > 10 KB Dateigröße.
+pub fn is_startable_artifact(path: &Path) -> bool {
+    std::fs::metadata(path).map(|m| m.len() > 10_000).unwrap_or(false)
+}
+
 fn hex_lower(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -706,6 +713,18 @@ mod tests {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"ab", b"abc"));
+    }
+
+    #[test]
+    fn artifact_gate_rejects_placeholder_and_missing_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let small = tmp.path().join("placeholder.exe");
+        std::fs::write(&small, vec![0u8; 512]).unwrap();
+        assert!(!is_startable_artifact(&small), "512-B-Platzhalter darf nie gelten");
+        let real = tmp.path().join("real.exe");
+        std::fs::write(&real, vec![0u8; 10_001]).unwrap();
+        assert!(is_startable_artifact(&real), "echtes Artefakt muss gelten");
+        assert!(!is_startable_artifact(&tmp.path().join("missing.exe")));
     }
 
     // ── E2E: vollständige Pipeline mit echten Minisign-Signaturen (B9) ──────

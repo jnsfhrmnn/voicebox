@@ -206,7 +206,7 @@ fn is_process_alive(pid: u32) -> bool {
 /// damit sich die Zahl nie wieder doppelt setzen muss (Drift-Erfahrung 87845d9).
 pub(crate) const GRACEFUL_SHUTDOWN_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
 
-fn resolve_sidecar_path() -> std::path::PathBuf {
+fn resolve_sidecar_path() -> Result<std::path::PathBuf, String> {
     // JFW-1 (Spec): Das Pre-Flight muss EXAKT dieselbe Binary auflösen wie der
     // Runtime-Spawn über `process_windows::spawn_sidecar` (Block (c) hat den
     // Tauri-Shell-Spawn ersetzt). Im Release-Layout löst sich die Sidecar
@@ -227,8 +227,8 @@ fn resolve_sidecar_path() -> std::path::PathBuf {
             } else {
                 parent.join(BASE).join(BASE)
             };
-            if onedir_exe.exists() {
-                return onedir_exe;
+            if backend::artifact::is_startable_artifact(&onedir_exe) {
+                return Ok(onedir_exe);
             }
             // Fallback: altes onefile-Einzel-Exe neben dem App-Exe.
             let candidate = if cfg!(windows) {
@@ -236,8 +236,8 @@ fn resolve_sidecar_path() -> std::path::PathBuf {
             } else {
                 parent.join(BASE)
             };
-            if candidate.exists() {
-                return candidate;
+            if backend::artifact::is_startable_artifact(&candidate) {
+                return Ok(candidate);
             }
         }
     }
@@ -254,22 +254,28 @@ fn resolve_sidecar_path() -> std::path::PathBuf {
         BASE.to_string()
     };
     let onedir = dev.join(&triple).join(format!("{BASE}{exe_suffix}"));
-    if onedir.exists() {
-        return onedir;
+    if backend::artifact::is_startable_artifact(&onedir) {
+        return Ok(onedir);
     }
     // b) onefile mit Triple — nur wenn echt (> 10 KB, Schwelle wie setup-dev-sidecar.js).
     let onefile = dev.join(format!("{triple}{exe_suffix}"));
-    if let Ok(meta) = std::fs::metadata(&onefile) {
-        if meta.len() > 10_000 {
-            return onefile;
-        }
+    if backend::artifact::is_startable_artifact(&onefile) {
+        return Ok(onefile);
     }
-    // c) Letzter Fallback: flacher Pfad (altes Verhalten).
-    if cfg!(windows) {
+    // c) Letzter Fallback: flacher Pfad — MIT Artefakt-Gate (USCRX-2026-16036):
+    //    der ~512-B-Platzhalter von setup-dev-sidecar.js wird nie gewählt.
+    let flat = if cfg!(windows) {
         dev.join(format!("{BASE}.exe"))
     } else {
         dev.join(BASE)
+    };
+    if backend::artifact::is_startable_artifact(&flat) {
+        return Ok(flat);
     }
+    Err(format!(
+        "keine startbare Sidecar-Binary gefunden (Artefakt-Gate > 10 KB) — geprüft: App-Verzeichnis und {:?}",
+        dev
+    ))
 }
 
 #[command]
@@ -361,7 +367,7 @@ async fn start_server(
             Some(p) if p.exists() => p,
             _ => cuda_dir.join(cuda_name), // 2) Legacy-Flachlayout.
         };
-        if exe_path.exists() {
+        if backend::artifact::is_startable_artifact(&exe_path) {
             println!("Found CUDA backend at {:?}", cuda_dir);
 
             // Version check: run --version from the onedir directory so
@@ -398,6 +404,13 @@ async fn start_server(
             } else {
                 None
             }
+        } else if exe_path.exists() {
+            // USCRX-2026-16036 (5): Platzhalter/Klein-Artefakte nie zulassen.
+            println!(
+                "CUDA backend {:?} ist kein echtes Artefakt (Gate > 10 KB) — verworfen, using bundled CPU binary",
+                exe_path
+            );
+            None
         } else {
             println!("No CUDA backend found, using bundled CPU binary");
             None
@@ -407,7 +420,7 @@ async fn start_server(
     // JFW-12 B8: Sidecar wird per CreateProcessW + Job Object erzeugt.
     // Der Tauri-Shell-Spawn ist ersetzt; die Binary-Auflösung bleibt identisch
     // (resolve_sidecar_path / CUDA-Detection).
-    let sidecar_exe = resolve_sidecar_path();
+    let sidecar_exe = resolve_sidecar_path()?;
 
     // JFW-1: pro Start zufaelliges Bearer-Token + Generation. Token bleibt im
     // Rust-RAM (state.api_token) und wird nur per Umgebung an den Sidecar
@@ -449,7 +462,7 @@ async fn start_server(
         //    Spec: NUR das gebuendelte CPU-Artefakt besitzt --schema-status /
         //    --migrate-only — die Operationen laufen daher immer ueber die
         //    CPU-Binary, nie ueber CUDA.
-        let sidecar_exe = resolve_sidecar_path();
+        let sidecar_exe = resolve_sidecar_path()?;
         let mut status_cmd = std::process::Command::new(&sidecar_exe);
         let status_output = status_cmd
             .arg("--schema-status")
@@ -1002,7 +1015,7 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             BackendVariant::Cpu => {
                 // JFW-12 P3: onedir erwartet cwd = Exe-Verzeichnis, damit _internal/
                 // gefunden wird. Für das onefile-Fallback ist cwd harmlos (Self-Unpack).
-                let exe = resolve_sidecar_path();
+                let exe = resolve_sidecar_path()?;
                 let cwd = exe.parent().map(|p| p.to_path_buf());
                 (exe, cwd)
             }
@@ -1021,8 +1034,29 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                 }
             }
         };
-        if !exe_path.exists() {
-            return Err(format!("Ziel-Binary fehlt: {}", exe_path.display()));
+        // USCRX-2026-16036 (3)+(5): Artefakt-Gate + fail-closed Versionsprüfung im
+        // Wechselpfad — ein unpassendes, unfertiges oder fremdes Artefakt wird NICHT
+        // gestartet (vorher stiller Crash „Server process ended unexpectedly“).
+        if !backend::artifact::is_startable_artifact(&exe_path) {
+            return Err(format!(
+                "Ziel-Binary fehlt oder ist kein echtes Artefakt (Gate > 10 KB): {}",
+                exe_path.display()
+            ));
+        }
+        if matches!(variant, BackendVariant::Cuda) {
+            let app_version = self.app.config().version.clone().unwrap_or_default();
+            let out = std::process::Command::new(&exe_path)
+                .arg("--version")
+                .current_dir(exe_path.parent().unwrap_or(std::path::Path::new(".")))
+                .output()
+                .map_err(|e| format!("CUDA-Artefakt-Version nicht prüfbar: {e}. Switch abgelehnt."))?;
+            let v = String::from_utf8_lossy(&out.stdout);
+            let binary_version = v.trim().split_whitespace().last().unwrap_or("");
+            if binary_version != app_version {
+                return Err(format!(
+                    "CUDA-Artefakt-Version {binary_version} weicht von der App-Version {app_version} ab — Switch abgelehnt (fail-closed). Bitte das CUDA-Addon neu installieren."
+                ));
+            }
         }
 
         // 2) Neues Bearer-Token + Generation (JFW-1: pro Start, nur per Umgebung).
@@ -1046,7 +1080,7 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         #[cfg(not(debug_assertions))]
         {
             let db_path = data_dir.join("data").join("jf-whisper.db");
-            let cpu_exe = resolve_sidecar_path();
+            let cpu_exe = resolve_sidecar_path()?;
             let status_output = std::process::Command::new(&cpu_exe)
                 .arg("--schema-status")
                 .arg(&db_path)
