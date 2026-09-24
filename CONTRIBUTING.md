@@ -160,6 +160,24 @@ git checkout -b fix/your-bug-fix
 - Add comments for complex logic
 - Update documentation as needed
 
+### 2a. Entwicklungsschleife (jf-whisper-Fork)
+
+`cargo run`/`cargo build` ohne Zusatz startet seit der Boot-Reparatur den
+**Produktionsmodus** — das Cargo-Default-Feature `custom-protocol` lädt das
+eingebettete Frontend. Die Entwicklungsschleife läuft ausschließlich über
+`--no-default-features` plus Vite-Dev-Server:
+
+```bash
+# Terminal 1: Vite-Dev-Server (Hot Reload)
+cd app && bun run dev
+
+# Terminal 2: Tauri im Entwicklungsmodus (lädt das Dev-Frontend)
+cd tauri/src-tauri && cargo run --no-default-features
+```
+
+Der Produktionsbau ist der gewöhnliche `cargo build --release` (bindet `app/dist`
+ein; vorher `bun run build`). Details: `BUILD.md` (Artefakt- und Build-Vertrag).
+
 ### 3. Test Your Changes
 
 - Test manually in the app

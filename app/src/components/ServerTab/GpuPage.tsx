@@ -184,6 +184,7 @@ function GlobalHotkeyRow() {
   const { t } = useTranslation();
   const chord = useBackendSwitchHotkeyStore((s) => s.chord);
   const setChord = useBackendSwitchHotkeyStore((s) => s.setChord);
+  const registration = useBackendSwitchHotkeyStore((s) => s.registration);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const keys = sortChordKeys(chord);
@@ -201,6 +202,25 @@ function GlobalHotkeyRow() {
       ) : (
         <span className="text-xs text-destructive">{t('settings.gpu.backend.hotkey.invalid')}</span>
       )}
+      {/* USCRX-2026-16037: sichtbarer Registrierungsstand (Spec-JFW-6:
+          „keine stille Ersatzbelegung“) — dieselbe Status-Sprache wie die
+          JFW-6-Vertragsfläche (RecordingRunPanel). */}
+      <span
+        role="status"
+        aria-live="polite"
+        className={cn(
+          'text-xs',
+          registration.state === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+        )}
+      >
+        {registration.state === 'registered'
+          ? `✓ ${registration.accelerator} registriert`
+          : registration.state === 'failed'
+            ? `⊘ nicht registriert — ${registration.error}`
+            : registration.state === 'pending'
+              ? '○ wird registriert …'
+              : '○ noch nicht registriert'}
+      </span>
       <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)}>
         <Keyboard className="mr-1 h-3.5 w-3.5" />
         {t('settings.gpu.backend.hotkey.change')}

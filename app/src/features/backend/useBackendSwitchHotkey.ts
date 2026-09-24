@@ -18,6 +18,24 @@ import type { BackendVariant } from './supervisor';
 import { getSupervisorSnapshot, onSupervisorChange, requestBackendSwitch } from './supervisor';
 import { useBackendSwitchHotkeyStore } from './useBackendSwitchHotkeyStore';
 
+/**
+ * USCRX-2026-16037: Auslöse-Regel des Shortcut-Handlers — nur `Pressed` schaltet,
+ * das Loslassen (`Released`) hat keine Wirkung (Regressionstest-Aspekt „Loslassen“).
+ */
+export function shouldTriggerShortcut(state: string): boolean {
+  return state === 'Pressed';
+}
+
+/**
+ * USCRX-2026-16037: Fehlerursache für die sichtbare Registrierungsmeldung
+ * (Regressionstest-Aspekt „Kollision“ — der Fehler wird benannt statt geschluckt).
+ */
+export function describeRegistrationError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  const text = String(err ?? '');
+  return text || 'unbekannter Registrierungsfehler';
+}
+
 /** keytap-Keyname → global-hotcut-Accelerator-Token (Modifikatoren + Haupttaste). */
 function acceleratorToken(key: string): string | null {
   switch (key) {
@@ -87,15 +105,22 @@ export function useBackendSwitchHotkey() {
   }, []);
 
   useEffect(() => {
+    const setRegistration = useBackendSwitchHotkeyStore.getState().setRegistration;
     const accelerator = chordToAccelerator(chord);
     if (!accelerator) {
       console.warn('[backend-hotkey] ungültige Belegung, nicht registriert:', chord);
+      setRegistration({
+        state: 'failed',
+        accelerator: null,
+        error: 'Belegung ungültig — genau eine Haupttaste plus mindestens ein Modifikator.',
+      });
       return;
     }
 
     let cancelled = false;
+    setRegistration({ state: 'pending', accelerator });
     register(accelerator, (event: ShortcutEvent) => {
-      if (cancelled || event.state !== 'Pressed') return;
+      if (cancelled || !shouldTriggerShortcut(event.state)) return;
       const current = activeRef.current;
       // Auf CUDA → CPU (immer erlaubt). Auf CPU/keine Info → CUDA (fail-closed
       // im Supervisor, falls Addon fehlt).
@@ -105,11 +130,18 @@ export function useBackendSwitchHotkey() {
       });
     })
       .then(() => {
-        if (cancelled) void unregisterAll();
+        if (cancelled) {
+          void unregisterAll();
+          return;
+        }
+        setRegistration({ state: 'registered', accelerator });
       })
       .catch((err: unknown) => {
-        // Belegung kollidiert mit einer anderen App → nicht fatal, nur loggen.
+        // Belegung kollidiert mit einer anderen App oder ist nicht registrierbar —
+        // Spec-JFW-6: das wird SICHTBAR gemeldet, nicht nur geloggt (USCRX-2026-16037).
+        const error = describeRegistrationError(err);
         console.warn('[backend-hotkey] Registrierung fehlgeschlagen:', err);
+        if (!cancelled) setRegistration({ state: 'failed', accelerator, error });
       });
 
     return () => {
