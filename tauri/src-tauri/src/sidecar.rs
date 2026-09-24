@@ -41,6 +41,7 @@ const MAIN_ALLOWLIST: &[&str] = &[
     "/batch",
     "/delivery",
     "/minutes",
+    "/meeting",
     "/logs",
     "/about",
     "/server",
@@ -74,6 +75,7 @@ fn is_valid_path(path: &str) -> bool {
         && !path.contains(' ')
         && !path.contains("\\")
         && !path.contains("://")
+        && !path.split('?').next().unwrap_or(path).split('/').any(|seg| seg == "." || seg == "..")
 }
 
 struct Session {

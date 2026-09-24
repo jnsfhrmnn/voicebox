@@ -306,3 +306,7 @@ def assert_content_free(payload: dict) -> None:
     for value in payload.values():
         if isinstance(value, dict):
             assert_content_free(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    assert_content_free(item)

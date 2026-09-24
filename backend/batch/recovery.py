@@ -24,7 +24,7 @@ def mark_interrupted(attempts: list[dict], *, current_epoch: str) -> list[dict]:
             a["status"] = "interrupted"
             a["reason_code"] = "unterbrochen"
             a["resumable"] = True
-        else:
+        elif a.get("status") != "interrupted":
             a["resumable"] = False
         out.append(a)
     return out

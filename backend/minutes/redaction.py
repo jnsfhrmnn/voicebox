@@ -80,7 +80,7 @@ def redact_text(text: str, plan: list[dict], offset: int = 0) -> str:
     for item in sorted(plan, key=lambda r: r["start"], reverse=True):
         start = item["start"] - offset
         end = item["end"] - offset
-        if end <= 0 or start >= len(out) or start < 0:
+        if end <= 0 or start >= len(out):
             continue
         start = max(start, 0)
         end = min(end, len(out))
