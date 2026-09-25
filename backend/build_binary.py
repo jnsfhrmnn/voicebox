@@ -52,10 +52,16 @@ def build_server(cuda=False):
         binary_name,
     ]
 
-    # Hide console window on Windows only. On macOS/Linux the sidecar needs
-    # stdout/stderr for Tauri to capture logs.
-    if platform.system() == "Windows":
-        args.append("--noconsole")
+    # Build-Vertrag (USCRX-2026-16038, siehe BUILD.md): console=True ist die
+    # Produktionsvariante. Die App liest stdout/stderr des Sidecars über Pipes
+    # (tauri/src-tauri/src/backend/process_windows.rs, STARTF_USESTDHANDLES) und
+    # zeigt sie im Server-Log. console=False (PyInstaller --noconsole) lässt
+    # sys.stdout/sys.stderr None/broken zurück — der Guard am Kopf von
+    # server.py schreibt dann auf os.devnull und die Ausgabe unter der App ist
+    # weg (Vorfall 2026-09-24). Deshalb hier ausdrücklich --console auf allen
+    # Plattformen: ein Konsolenfenster zeigt der Spawn nicht, weil die GUI-App
+    # ohne Konsolen-Handle kein Kindfenster erzeugt.
+    args.append("--console")
 
     # numpy 2.x / torch ABI mismatch fix: install memmove fallback for
     # torch.from_numpy() before the app starts. Runtime hooks run after

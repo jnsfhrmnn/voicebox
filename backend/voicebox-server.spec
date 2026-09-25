@@ -89,6 +89,10 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
+    # Build-Vertrag (USCRX-2026-16038, siehe BUILD.md): console=True ist die
+    # Produktionsvariante — die App liest stdout/stderr über Pipes (Server-Log).
+    # console=False zerstört die Ausgabe unter der App: sys.stdout/sys.stderr
+    # bleiben None/broken und server.py schreigt auf os.devnull (Guard dort).
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,

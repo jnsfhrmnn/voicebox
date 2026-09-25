@@ -4,6 +4,31 @@ Gilt für `application/` (Submodule, Fork `jnsfhrmnn/voicebox`) und die Release-
 unter `E:\jf-whisper\release-assets\tools\`. Änderungen an der Werkzeugkette nur hier
 dokumentiert einführen — reproduzierbare Artefakte sind Vertrag, keine Routine.
 
+## Build-Vertrag Sidecar (USCRX-2026-16038)
+
+- **Einzig zulässiger Build-Weg:** `python backend/build_binary.py` (CPU) bzw.
+  `python backend/build_binary.py --cuda` (JFW-1-Profil, `--onedir`). Kein
+  direkter `pyinstaller <spec>`-Aufruf, kein Bau über eine liegengelassene
+  generierte Spec. Vorfall 2026-09-24: ein Seitenkanal-Bau über
+  `jf-whisper-server.spec` mit Python 3.12 ersetzte die Werkzeugkette und
+  brachte den Server zum Ausfall — die Ersatzkette `build_binary.py` stellte
+  den Betrieb wieder her.
+- **console=True ist die Produktionsvariante.** Die App liest stdout/stderr des
+  Sidecars über Pipes (`tauri/src-tauri/src/backend/process_windows.rs`,
+  `STARTF_USESTDHANDLES`) und zeigt sie im Server-Log. **console=False zerstört
+  die Ausgabe unter der App:** PyInstaller `--noconsole` lässt
+  `sys.stdout`/`sys.stderr` None/broken zurück, der Guard am Kopf von
+  `backend/server.py` schreibt dann auf `os.devnull` — Logs, Fehler und
+  Fortschritt verschwinden. Ein Konsolenfenster kostet `--console` dabei nicht:
+  der Spawn läuft aus einer GUI-App ohne Konsolen-Handle, es entsteht kein
+  Kindfenster. Die Specs tragen die Begründung als Kommentar an `console=`.
+
+## Deploy-Kette Sidecar (atomar, USCRX-2026-16106)
+
+Werkzeug: `python scripts/deploy_sidecar.py --target-dir <App-Exe-Dir>`
+(bauen → prüfen → **ein einziger Tauschschritt** → Deploy-Check). Nur prüfen:
+`--check`. Einzelheiten siehe „Betriebsdisziplin“ unten.
+
 ## CUDA-Artefakt (Addon) — Installationspfad und Vertrag
 
 **Installationspfad (produktiv):**
@@ -48,11 +73,19 @@ Kopierschritt hinterlässt ein halb installiertes Artefakt (Vorfall 2026-09-24) 
 der Wechselpfad erkennt das inzwischen fail-closed (Sync-Assert Manifest-Build-ID
 gegen Build-Verzeichnis, `main.rs start_target`).
 
-**Toolchain-Festlegung (Stand 2026-09-24):** CPU-/Sidecar-Builds über
+**Toolchain-Festlegung (Stand 2026-09-25, gemessen):** CPU-/Sidecar-Builds über
 `application/backend/.venv` (Python 3.12.11, PyInstaller 6.22.3); CUDA-Builds
-über `_fork/backend/.venv-cuda` (Python 3.11.15, torch 2.11.0+cu128). Artefakte
-sind nur reproduzierbar, solange diese Venvs die Werkzeugkette tragen — vor
-jedem Release die Versionen hier nachziehen.
+über `_fork/backend/.venv-cuda` (Python 3.11.15, torch 2.11.0+cu128).
+
+- **Mindestversion:** Python 3.11 (darunter tragen weder PyInstaller 6 noch die
+  Pins die Werkzeugkette), PyInstaller 6.x.
+- **Empfohlen und vertraglich:** genau die oben genannten Venv-Stände. Artefakte
+  sind nur reproduzierbar, solange diese Venvs die Werkzeugkette tragen — vor
+  jedem Release die Versionen hier nachziehen (`python --version`,
+  `python -c "import PyInstaller; print(PyInstaller.__version__)"`).
+- **Python-Version nie still wechseln:** das lauffähige Alt-Artefakt stammt von
+  Python 3.11, das CPU-Venv ist inzwischen 3.12 — Mischbauten über Venvs hinweg
+  waren der Toolchain-Drift des Vorfalls 2026-09-24.
 
 **Testinstanz-Disziplin (Vorfall 2026-09-24, dreimal betriebsstörend):**
 - Eigene Testinstanzen **per PID** beenden (`taskkill /PID <pid> /F`) — nie per

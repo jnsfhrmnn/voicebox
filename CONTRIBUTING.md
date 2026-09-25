@@ -178,6 +178,22 @@ cd tauri/src-tauri && cargo run --no-default-features
 Der Produktionsbau ist der gewöhnliche `cargo build --release` (bindet `app/dist`
 ein; vorher `bun run build`). Details: `BUILD.md` (Artefakt- und Build-Vertrag).
 
+### 2b. Betriebsdisziplin (jf-whisper-Fork)
+
+Regeln für Test- und Deploy-Läufe — Vertrag: `BUILD.md`. Hintergrund ist der
+Vorfall 2026-09-24: zurückgelassene Testinstanzen haben dreimal den
+Nutzerbetrieb blockiert, eine halbe Deploy-Kette ein Artefakt halb installiert.
+
+- Eigene Testinstanzen **per PID** beenden (`taskkill /PID <pid> /F`) — nie per
+  Wrapperaufruf (der trifft nur den Terminal-Wrapper, nicht die Prozesse).
+- Nach jedem Lauf einen **Restprozess-Check** fahren
+  (`tasklist | findstr /i voicebox`). Fensterlose `voicebox.exe` mit ~0 CPU-Zeit
+  sind Restinstanzen der Testläufe und blockieren Nutzerstarts.
+- **Teststarts nur ohne aktive Nutzerinstanz** (Datenroot-Lock + Exe-Sperre).
+- Sidecar ausschließlich über `backend/build_binary.py` bauen und über
+  `scripts/deploy_sidecar.py` deployen (atomare Deploy-Kette mit
+  Artefakt-Gate, `--version`, `_internal`- und Python-DLL-Prüfung).
+
 ### 3. Test Your Changes
 
 - Test manually in the app
