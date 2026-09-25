@@ -753,7 +753,13 @@ async fn start_server(
                 }
                 tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
                     let line_str = String::from_utf8_lossy(&line);
-                    eprintln!("Server error: {}", line_str);
+                    // USCRX-2026-16039: Python-Logging geht über stderr — INFO-Zeilen
+                    // dürfen nicht als Fehler beschriftet werden („Server error:" war
+                    // Fehlalarm-Sammler). Nur echte Fehlerlinien tragen das Fehler-Label.
+                    let is_error = line_str.contains(" - ERROR - ")
+                        || line_str.contains(" - CRITICAL - ")
+                        || line_str.contains("Traceback");
+                    eprintln!("{}: {}", if is_error { "Server error" } else { "Server" }, line_str);
                     let _ = app_handle.emit("server-log", serde_json::json!({
                         "stream": "stderr",
                         "line": line_str.trim_end(),
@@ -1044,6 +1050,29 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             ));
         }
         if matches!(variant, BackendVariant::Cuda) {
+            // USCRX-2026-16007/RL-13 (Sync-Assert): Manifest-Build-ID und
+            // Build-Verzeichnis müssen übereinstimmen — ein halb installiertes
+            // Addon (Current-Pointer zeigt auf unvollständiges Verzeichnis) wird
+            // fail-closed abgelehnt (Fehlerklasse USCRX-2026-16036).
+            let dir = exe_path
+                .parent()
+                .unwrap_or(std::path::Path::new(""))
+                .to_path_buf();
+            let manifest_raw = std::fs::read_to_string(dir.join("manifest.json")).map_err(|e| {
+                format!("CUDA-Manifest nicht lesbar ({e}) — halb installiertes Addon? Switch abgelehnt.")
+            })?;
+            let manifest: backend::artifact::Manifest = serde_json::from_str(&manifest_raw)
+                .map_err(|e| format!("CUDA-Manifest ungültig: {e}. Switch abgelehnt."))?;
+            let dir_id = dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if manifest.build_id != dir_id {
+                return Err(format!(
+                    "CUDA-Sync-Assert: Manifest-Build-ID {} passt nicht zum Build-Verzeichnis {dir_id} — Switch abgelehnt.",
+                    manifest.build_id
+                ));
+            }
             let app_version = self.app.config().version.clone().unwrap_or_default();
             let out = std::process::Command::new(&exe_path)
                 .arg("--version")

@@ -317,10 +317,10 @@ def consistency_errors(register: dict) -> list[str]:
 def assert_content_free(payload: dict) -> None:
     """Zuordnungen/Namen duerfen nie in Logs, Metriken oder Crash-Dumps.
 
-    Hinweis (USCRX-2026-16007/RL-08, ehrlich formuliert): Der Guard ist NOCH
-    NICHT durchgaengig in die Produktivpfade der minutes/delivery-Services
-    verdrahtet — die Garantie gilt bis zur Verdrahtung (Follow-Up) NUR fuer
-    Aufrufer, die ihn explizit einsetzen, und wird nicht durchgaengig erzwungen.
+    Verdrahtung (USCRX-2026-16007/RL-08): die Garantie wird generisch ueber
+    ``minutes.log_guard.ContentFreeLogFilter`` an die Log-Handler gebunden
+    (Installationsstelle ``backend/app.py`` ``_run_startup``) und dort fail-closed
+    erzwungen; direkte Aufrufer koennen diesen Guard weiterhin explizit nutzen.
     """
     for key in FORBIDDEN_CONTENT_KEYS:
         if key in payload:

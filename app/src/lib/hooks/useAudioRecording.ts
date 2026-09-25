@@ -7,6 +7,27 @@ interface UseAudioRecordingOptions {
   onRecordingComplete?: (blob: Blob, duration?: number) => void;
 }
 
+/**
+ * USCRX-2026-16039 (Fehlerdurchleitung): DOMException-Namen des Medienzugriffs in
+ * handlungsleitende deutsche Meldungen übersetzen. Roh-Englisch wie
+ * „Requested device not found" war für den Nutzer nicht verständlich (gemeldet
+ * 2026-09-24: Diktat-Fehler ohne sichtbare Ursache — Ursache war fehlendes Gerät).
+ */
+export function describeMediaError(err: unknown): string {
+  const name = err instanceof Error ? err.name : '';
+  const detail = err instanceof Error ? err.message : String(err);
+  if (name === 'NotFoundError') {
+    return 'Kein Mikrofon gefunden — bitte Mikrofon anschließen oder in den Windows-Audioeinstellungen aktivieren und erneut versuchen.';
+  }
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return 'Mikrofonzugriff nicht erlaubt — bitte der App den Mikrofonzugriff in den Systemeinstellungen erlauben.';
+  }
+  if (name === 'NotReadableError') {
+    return 'Mikrofon ist belegt oder nicht lesbar — bitte andere Audio-Programme schließen und erneut versuchen.';
+  }
+  return detail || 'Mikrofonzugriff fehlgeschlagen — bitte Berechtigungen prüfen.';
+}
+
 export function useAudioRecording({
   maxDurationSeconds,
   onRecordingComplete,
@@ -155,10 +176,10 @@ export function useAudioRecording({
         }
       }, 100);
     } catch (err) {
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : 'Failed to access microphone. Please check permissions.';
+      // USCRX-2026-16039 (Fehlerdurchleitung): Roh-Englisch der Web-Audio-Ebene
+      // (z. B. „Requested device not found") wird in handlungsleitende deutsche
+      // Meldungen übersetzt — der Nutzer soll wissen, was zu tun ist.
+      const errorMessage = describeMediaError(err);
       setError(errorMessage);
       setIsRecording(false);
     }

@@ -39,6 +39,29 @@ CUDA-Artefakt mit abgeschnittener Alembic-Kette — das im Wechsel starb
 (`Unbekannte Schema-Revision 'd8e4c2b1a6f7'`), weil seine Migrationsdateien die
 aktuellen Revisionen nicht kannten.
 
+## Betriebsdisziplin (Verträge statt Routinen)
+
+**Deploy-Kette Sidecar (atomar):** bauen (`build_binary.py`) → prüfen (Artefakt-
+Gate > 10 KB, `--version`, `_internal` vollständig, Python-DLL vorhanden) →
+**ein einziger Tauschschritt**. Keine halben Deploy-Ketten: ein abgebrochener
+Kopierschritt hinterlässt ein halb installiertes Artefakt (Vorfall 2026-09-24) —
+der Wechselpfad erkennt das inzwischen fail-closed (Sync-Assert Manifest-Build-ID
+gegen Build-Verzeichnis, `main.rs start_target`).
+
+**Toolchain-Festlegung (Stand 2026-09-24):** CPU-/Sidecar-Builds über
+`application/backend/.venv` (Python 3.12.11, PyInstaller 6.22.3); CUDA-Builds
+über `_fork/backend/.venv-cuda` (Python 3.11.15, torch 2.11.0+cu128). Artefakte
+sind nur reproduzierbar, solange diese Venvs die Werkzeugkette tragen — vor
+jedem Release die Versionen hier nachziehen.
+
+**Testinstanz-Disziplin (Vorfall 2026-09-24, dreimal betriebsstörend):**
+- Eigene Testinstanzen **per PID** beenden (`taskkill /PID <pid> /F`) — nie per
+  Wrapperaufruf (der trifft nur den Terminal-Wrapper).
+- Nach jedem Lauf einen **Restprozess-Check** fahren (`tasklist | grep -i voicebox`).
+- **Teststarts nur ohne aktive Nutzerinstanz** (Datenroot-Lock + Exe-Sperre).
+- Fensterlose `voicebox.exe` mit ~0 CPU-Zeit sind Restinstanzen der Testläufe —
+  sie blockieren Nutzerstarts (Datenroot-Lock-Zweikampf).
+
 ## Artefakt-Gate vor jedem Sidecar-Start
 
 Nur echte Artefakte (> 10 KB) sind startbar (`backend::artifact::is_startable_artifact`);

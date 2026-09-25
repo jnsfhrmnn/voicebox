@@ -286,6 +286,13 @@ async def _run_startup(application: FastAPI) -> None:
     except Exception as e:
         logger.warning("Could not create HuggingFace cache directory: %s", e)
 
+    # USCRX-2026-16007/RL-08: Log-Gate — assert_content_free-Semantik generisch an
+    # die echte Serialisierungsstelle (alle Log-Handler) binden: Zuordnungen/Namen
+    # dürfen nie in Logs, Metriken oder Crash-Dumps landen (fail-closed).
+    from .minutes.log_guard import install_log_gate
+
+    install_log_gate()
+
     logger.info("Ready")
 
 

@@ -74,3 +74,4 @@ backend/tests/fixtures/reference_voice.txt
 
 # JFW-12 CUDA-Build-Venv (lokal, ~3 GB)
 backend/.venv-cuda/
+/.uscrx_session_lock.*
