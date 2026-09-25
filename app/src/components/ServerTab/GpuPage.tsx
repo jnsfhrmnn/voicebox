@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { Cpu, Loader2, ShieldCheck, Wrench, Trash2, RefreshCw, Keyboard } from 'lucide-react';
+import { AlertCircle, Cpu, Loader2, ShieldCheck, Wrench, Trash2, RefreshCw, Keyboard } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
 import type { HealthResponse } from '@/lib/api/types';
 import { apiClient } from '@/lib/api/client';
 import { useServerHealth } from '@/lib/hooks/useServer';
@@ -127,6 +128,25 @@ function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'err' | 'idle'; childr
       {children}
     </span>
   );
+}
+
+/**
+ * Betriebsklasse der Runtime-Phase (Debug-String des Supervisor-Automaten,
+ * z. B. `CpuReady(3)`, `PreparingCuda(...)`, `NoBackendReady(...)`).
+ *
+ * - `ready`      — Betrieb erlaubt, Aktionen sind scharf.
+ * - `transition` — ein Vorgang läuft (Boot/Wechsel/Stop), Aktionen bleiben aus.
+ * - `down`       — kein Backend bereit; nur Recovery/Add-on-Installation.
+ * - `unknown`    — Snapshot noch nicht geladen (oder nicht verfügbar).
+ */
+function classifyRuntimePhase(phase: string | null): 'ready' | 'transition' | 'down' | 'unknown' {
+  if (!phase) return 'unknown';
+  const p = phase.toLowerCase();
+  // `NoBackendReady(...)` enthält selbst „ready“ — deshalb zuerst prüfen.
+  if (p.includes('nobackend')) return 'down';
+  if (p.includes('ready')) return 'ready';
+  if (/booting|draining|preparing|stopping|verifying/.test(p)) return 'transition';
+  return 'unknown';
 }
 
 /** Geordnete Wechselprogress-Leiste: markiert die aktive Phase. */
@@ -279,6 +299,7 @@ export function GpuPage() {
 
   // Betriebsmodus-Ableitung aus dem Snapshot.
   const phase = snapshot?.runtime_phase ?? null;
+  const runtimeReason = snapshot?.runtime_reason ?? null;
   const activeVariant = snapshot?.active_variant ?? null;
   const admissionOpen = snapshot?.admission_open ?? false;
   const artifactPhase = snapshot?.artifact_phase ?? 'not_installed';
@@ -289,10 +310,93 @@ export function GpuPage() {
   const canSwitchToCuda = artifactPhase === 'installed' && activeVariant !== 'cuda';
   const canSwitchToCpu = activeVariant === 'cuda';
 
+  // Echte Schaltflaechen-Zustaende: nur scharf, wenn runtime_phase den Betrieb
+  // erlaubt. Sonst disabled MIT sichtbarem Grund statt toter Knoepfe.
+  const runtimeClass = classifyRuntimePhase(phase);
+  const switchAllowed = runtimeClass === 'ready';
+  // Add-on-Lifecycle bleibt auch ohne bereites Backend zugaenglich (Recovery):
+  // nur laufende Servervorgange und ein noch unbekannter Status sperren.
+  const addonOpsAllowed = runtimeClass === 'ready' || runtimeClass === 'down';
+  const blockedReasonKey =
+    runtimeClass === 'transition'
+      ? 'settings.gpu.backend.availability.transition'
+      : runtimeClass === 'down'
+        ? 'settings.gpu.backend.availability.notReady'
+        : runtimeClass === 'unknown'
+          ? 'settings.gpu.backend.availability.unknown'
+          : null;
+
+  // Phasenabhängige Zustandsmeldung für „Laufende Arbeit“ statt Blindtext:
+  // Start, laufender Vorgang oder nicht bereites Backend werden benannt.
+  const workMessageKey =
+    runtimeClass === 'down'
+      ? 'settings.gpu.backend.work.serverNotReady'
+      : phase && /booting/i.test(phase)
+        ? 'settings.gpu.backend.work.serverStarting'
+        : runtimeClass === 'transition'
+          ? 'settings.gpu.backend.work.serverBusy'
+          : null;
+
+  // Recovery-Pfad: Server ueber das Tauri-Kommando `restart_server` neu starten
+  // (application/tauri/src-tauri/src/main.rs). Fehler landen im Fehlerblock.
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+  const restartServer = async () => {
+    setRestarting(true);
+    setRestartError(null);
+    try {
+      await invoke('restart_server');
+    } catch (e) {
+      setRestartError(typeof e === 'string' ? e : e instanceof Error ? e.message : String(e));
+    } finally {
+      setRestarting(false);
+    }
+  };
+
   return (
     <div className="space-y-8 max-w-2xl">
       {/* Geräteinfo (Health-basiert, unverändert) */}
       {health && <GpuInfoCard health={health} />}
+
+      {/* Sichtbarer Fehlerzustand (USCRX-2026-16039 Punkt 3): Fehlertexte
+          aus dem Supervisor-Snapshot — Text, nicht nur Farbe. */}
+      {(runtimeReason || artifactError || restartError) && (
+        <section
+          role="alert"
+          className="rounded-lg border border-red-500/40 bg-red-500/5 p-4 space-y-2"
+        >
+          <h4 className="flex items-center gap-2 text-sm font-medium text-red-600 dark:text-red-400">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {t('settings.gpu.backend.error.title')}
+          </h4>
+          <ul className="space-y-1.5 text-xs">
+            {runtimeReason && (
+              <li className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium text-red-600 dark:text-red-400">
+                  {t('settings.gpu.backend.error.runtimeLabel')}
+                </span>
+                <span className="break-words text-foreground/90">{runtimeReason}</span>
+              </li>
+            )}
+            {artifactError && (
+              <li className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium text-red-600 dark:text-red-400">
+                  {t('settings.gpu.backend.error.artifactLabel')}
+                </span>
+                <span className="break-words text-foreground/90">{artifactError}</span>
+              </li>
+            )}
+            {restartError && (
+              <li className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-medium text-red-600 dark:text-red-400">
+                  {t('settings.gpu.backend.error.restartLabel')}
+                </span>
+                <span className="break-words text-foreground/90">{restartError}</span>
+              </li>
+            )}
+          </ul>
+        </section>
+      )}
 
       {/* 1. Betriebsmodus */}
       <Section title={t('settings.gpu.backend.mode.title')} icon={<Cpu className="h-4 w-4 text-muted-foreground" />}>
@@ -323,14 +427,41 @@ export function GpuPage() {
           </div>
         </div>
 
-        {/* Switch-Aktionen */}
+        {/* Switch-Aktionen — nur scharf, wenn runtime_phase den Betrieb erlaubt. */}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button size="sm" variant={canSwitchToCuda ? 'default' : 'outline'} disabled={!canSwitchToCuda} onClick={() => void requestSwitch('cuda')}>
+          <Button
+            size="sm"
+            variant={canSwitchToCuda && switchAllowed ? 'default' : 'outline'}
+            disabled={!canSwitchToCuda || !switchAllowed}
+            onClick={() => void requestSwitch('cuda')}
+          >
             {t('settings.gpu.backend.switch.toCuda')}
           </Button>
-          <Button size="sm" variant={canSwitchToCpu ? 'default' : 'outline'} disabled={!canSwitchToCpu} onClick={() => void requestSwitch('cpu')}>
+          <Button
+            size="sm"
+            variant={canSwitchToCpu && switchAllowed ? 'default' : 'outline'}
+            disabled={!canSwitchToCpu || !switchAllowed}
+            onClick={() => void requestSwitch('cpu')}
+          >
             {t('settings.gpu.backend.switch.toCpu')}
           </Button>
+        </div>
+        {!switchAllowed && blockedReasonKey && (
+          <p className="text-xs text-muted-foreground" role="status">
+            ⊘ {t(blockedReasonKey)}
+          </p>
+        )}
+
+        {/* Recovery-Pfad: Server neu starten (echtes Tauri-Kommando
+            `restart_server`; Fehler erscheinen im Fehlerblock oben). */}
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <Button size="sm" variant="outline" disabled={restarting} onClick={() => void restartServer()}>
+            <RefreshCw className={cn('mr-1 h-3.5 w-3.5', restarting && 'animate-spin')} />
+            {restarting
+              ? t('settings.gpu.backend.recovery.restarting')
+              : t('settings.gpu.backend.recovery.restart')}
+          </Button>
+          <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.recovery.restartHint')}</p>
         </div>
 
         {/* JFW-12 P3+: Globaler Switch-Hotkey — frei in der UI belegbar. */}
@@ -339,12 +470,14 @@ export function GpuPage() {
 
       {/* 2. Laufende Arbeit */}
       <Section title={t('settings.gpu.backend.work.title')}>
-        {tasksQuery.isError ? (
-          <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.work.unavailable')}</p>
+        {workMessageKey ? (
+          <p className="text-xs text-muted-foreground/60">{t(workMessageKey)}</p>
+        ) : tasksQuery.isError ? (
+          <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.work.loadFailed')}</p>
         ) : tasksQuery.isLoading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {t('settings.gpu.backend.work.loading')}
+            {t('settings.gpu.backend.work.loadingTasks')}
           </div>
         ) : (
           <>
@@ -397,37 +530,39 @@ export function GpuPage() {
           )}
         </div>
 
-        {artifactError && (
-          <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400">
-            {artifactError}
-          </p>
-        )}
+        {/* Addon-Fehler stehen im eigenen Fehlerblock oben (mit Label statt
+            nur Farbe) — hier keine Doppelanzeige. */}
 
         <div className="flex flex-wrap gap-2 pt-1">
           {(artifactPhase === 'not_installed' || artifactPhase === 'repair_required') && (
-            <Button size="sm" variant={artifactPhase === 'repair_required' ? 'outline' : 'default'} disabled={addonBusy} onClick={() => void installAddon()}>
+            <Button size="sm" variant={artifactPhase === 'repair_required' ? 'outline' : 'default'} disabled={addonBusy || !addonOpsAllowed} onClick={() => void installAddon()}>
               {t('settings.gpu.backend.addon.install')}
             </Button>
           )}
           {artifactPhase === 'installed' && (
-            <Button size="sm" variant="outline" disabled={addonBusy} onClick={() => void repairAddon()}>
+            <Button size="sm" variant="outline" disabled={addonBusy || !addonOpsAllowed} onClick={() => void repairAddon()}>
               <RefreshCw className="mr-1 h-3.5 w-3.5" />
               {t('settings.gpu.backend.addon.checkUpdate')}
             </Button>
           )}
           {artifactPhase === 'repair_required' && (
-            <Button size="sm" disabled={addonBusy} onClick={() => void repairAddon()}>
+            <Button size="sm" disabled={addonBusy || !addonOpsAllowed} onClick={() => void repairAddon()}>
               <Wrench className="mr-1 h-3.5 w-3.5" />
               {t('settings.gpu.backend.addon.repair')}
             </Button>
           )}
           {(artifactPhase === 'installed' || artifactPhase === 'repair_required') && (
-            <Button size="sm" variant="ghost" disabled={addonBusy} onClick={() => void removeAddon()}>
+            <Button size="sm" variant="ghost" disabled={addonBusy || !addonOpsAllowed} onClick={() => void removeAddon()}>
               <Trash2 className="mr-1 h-3.5 w-3.5" />
               {t('settings.gpu.backend.addon.remove')}
             </Button>
           )}
         </div>
+        {!addonOpsAllowed && !addonBusy && blockedReasonKey && (
+          <p className="text-xs text-muted-foreground" role="status">
+            ⊘ {t(blockedReasonKey)}
+          </p>
+        )}
       </Section>
 
       {/* 4. Wechselprogress */}

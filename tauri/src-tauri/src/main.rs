@@ -159,9 +159,20 @@ fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<(), String> {
         let pid_str: String = content.lines().next().unwrap_or("").trim().to_string();
         if let Ok(pid) = pid_str.parse::<u32>() {
             if is_process_alive(pid) {
+                // USCRX-2026-16039: die Sperre wird verständlicher — PID, seit
+                // wann die andere Instanz läuft (zweite Lock-Zeile, Unix-
+                // Sekunden) und ein gefahrloser Schließweg per PID.
+                let seit = content
+                    .lines()
+                    .nth(1)
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .map(format_alter)
+                    .unwrap_or_else(|| "seit unbekannter Zeit".to_string());
                 return Err(format!(
-                    "JF Whisper laeuft bereits am Datenroot {} (PID {}). Schliessen Sie die andere Instanz oder waehlen Sie einen anderen Datenroot.",
+                    "JF Whisper läuft bereits am Datenroot {} (PID {}, {}). Schließen Sie das andere JF-Whisper-Fenster über dessen Titelleiste — das ist der gefahrlose Weg. Falls es nicht reagiert, beenden Sie es in einer Konsole gezielt per PID: taskkill /PID {} /F. Alternativ wählen Sie einen anderen Datenroot.",
                     data_dir.display(),
+                    pid,
+                    seit,
                     pid
                 ));
             }
@@ -177,6 +188,24 @@ fn acquire_instance_lock(data_dir: &std::path::Path) -> Result<(), String> {
     std::fs::write(&lock_path, format!("{}\n{}", own_pid, ts))
         .map_err(|e| format!("Instance-Lock konnte nicht geschrieben werden: {}", e))?;
     Ok(())
+}
+
+/// Alter eines Unix-Sekunden-Zeitstempels als lesbarer Zeitraum (USCRX-2026-16039).
+fn format_alter(ts: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let delta = now.saturating_sub(ts);
+    if delta < 120 {
+        format!("seit {} Sekunden", delta)
+    } else if delta < 7200 {
+        format!("seit {} Minuten", delta / 60)
+    } else if delta < 172_800 {
+        format!("seit {} Stunden", delta / 3600)
+    } else {
+        format!("seit {} Tagen", delta / 86_400)
+    }
 }
 
 /// Ist der Prozess mit dieser PID noch aktiv? (Windows: tasklist, POSIX: kill -0)
@@ -609,6 +638,12 @@ async fn start_server(
     let timeout = tokio::time::Duration::from_secs(120);
     let start_time = tokio::time::Instant::now();
     let mut error_output = Vec::new();
+    // USCRX-2026-16039: Fehlerdurchleitung — die letzten Rohzeilen beider
+    // Streams bleiben am Leben, damit ein abgebrochener Boot den echten
+    // Fehler (z. B. die deutschen DB-Vertragsfehler) samt Auszug zeigt.
+    // Bewusst ohne Schlüsselwort-Filter: der Auszug ist mechanisch, die
+    // Einordnung macht die lesende Stelle.
+    let mut output_tail: Vec<String> = Vec::new();
 
     loop {
         if start_time.elapsed() > timeout {
@@ -624,7 +659,16 @@ async fn start_server(
             // JFW-12 B2: Fehlerphase → NoBackendReady (sichtbar, nicht still).
             supervisor.boot_failed("boot_timeout".into());
 
-            return Err("Server startup timeout - check Console.app for detailed logs".to_string());
+            // USCRX-2026-16039: Fehlerdurchleitung — die Meldungen des Servers
+            // gehören ins Fehlerbild, die Generik ist nur die Hülle.
+            let mut msg = String::from("Serverstart nach 120 Sekunden abgebrochen (Timeout).");
+            if output_tail.is_empty() {
+                msg.push_str(" Es liegen keine Server-Meldungen vor.");
+            } else {
+                msg.push_str("\n\nLetzte Meldungen des Servers:\n");
+                msg.push_str(&output_tail.join("\n"));
+            }
+            return Err(msg);
         }
 
         match tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv()).await {
@@ -670,6 +714,10 @@ async fn start_server(
                             }
                         }
                         println!("Server output: {}", line_str);
+                        output_tail.push(line_str.trim_end().to_string());
+                        if output_tail.len() > 40 {
+                            output_tail.remove(0);
+                        }
                         let _ = app.emit("server-log", serde_json::json!({
                             "stream": "stdout",
                             "line": line_str.trim_end(),
@@ -683,6 +731,10 @@ async fn start_server(
                     tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
                         let line_str = String::from_utf8_lossy(&line).to_string();
                         eprintln!("Server: {}", line_str);
+                        output_tail.push(line_str.trim_end().to_string());
+                        if output_tail.len() > 40 {
+                            output_tail.remove(0);
+                        }
                         let _ = app.emit("server-log", serde_json::json!({
                             "stream": "stderr",
                             "line": line_str.trim_end(),
@@ -728,7 +780,18 @@ async fn start_server(
                     eprintln!("Server process ended unexpectedly during startup!");
                     eprintln!("The server binary may have crashed or exited with an error.");
                     eprintln!("Check Console.app logs for more details (search for 'voicebox')");
-                    return Err("Server process ended unexpectedly".to_string());
+                    // USCRX-2026-16039: Fehlerdurchleitung — die konkreten
+                    // Vertragsfehler des Servers (z. B. die deutschen DB-Schema-
+                    // Meldungen) stehen in seinen Ausgaben. Die Generik ist nur
+                    // die Hülle und tritt erst hervor, wenn nichts vorliegt.
+                    let mut msg = String::from("Serverprozess unerwartet beendet.");
+                    if output_tail.is_empty() {
+                        msg.push_str(" Es liegen keine Server-Meldungen vor.");
+                    } else {
+                        msg.push_str("\n\nLetzte Meldungen des Servers:\n");
+                        msg.push_str(&output_tail.join("\n"));
+                    }
+                    return Err(msg);
                 }
             }
             Err(_) => {

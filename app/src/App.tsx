@@ -1,5 +1,6 @@
 import { RouterProvider } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import voiceboxLogo from '@/assets/voicebox-logo.png';
 import { DictateWindow } from '@/components/DictateWindow/DictateWindow';
 import ShinyText from '@/components/ShinyText';
@@ -25,14 +26,16 @@ function isDictateView(): boolean {
   return new URLSearchParams(window.location.search).get('view') === 'dictate';
 }
 
-const LOADING_MESSAGES = [
-  'Starting transcription sidecar...',
-  'Loading Whisper model...',
-  'Warming up tensors...',
-  'Preparing audio pipelines...',
-  'Syncing audio buffers...',
-  'Establishing model connections...',
-  'Validating capture storage...',
+// USCRX-2026-16039: die Ladetexte laufen über die i18n-Schicht — die
+// Oberfläche spricht durchgehend Deutsch (Produkt-Entscheidung).
+const LOADING_MESSAGE_KEYS = [
+  'app.loading.1',
+  'app.loading.2',
+  'app.loading.3',
+  'app.loading.4',
+  'app.loading.5',
+  'app.loading.6',
+  'app.loading.7',
 ];
 
 function App() {
@@ -50,6 +53,7 @@ function App() {
 
 function MainApp() {
   const platform = usePlatform();
+  const { t } = useTranslation();
   const [serverReady, setServerReady] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
@@ -160,7 +164,7 @@ function MainApp() {
     }
 
     const interval = setInterval(() => {
-      setLoadingMessageIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+      setLoadingMessageIndex((prev) => (prev + 1) % LOADING_MESSAGE_KEYS.length);
     }, 3000);
 
     return () => clearInterval(interval);
@@ -189,8 +193,10 @@ function MainApp() {
           </div>
           {startupError ? (
             <div className="animate-fade-in-delayed max-w-md mx-auto space-y-3">
-              <p className="text-lg font-medium text-destructive">Server startup failed</p>
-              <p className="text-sm text-muted-foreground">{startupError}</p>
+              <p className="text-lg font-medium text-destructive">{t('app.startup.failed')}</p>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                {startupError}
+              </p>
               <button
                 type="button"
                 className="mt-2 px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
@@ -201,13 +207,13 @@ function MainApp() {
                   window.location.reload();
                 }}
               >
-                Retry
+                {t('app.startup.retry')}
               </button>
             </div>
           ) : (
             <div className="animate-fade-in-delayed">
               <ShinyText
-                text={LOADING_MESSAGES[loadingMessageIndex]}
+                text={t(LOADING_MESSAGE_KEYS[loadingMessageIndex])}
                 className="text-lg font-medium text-muted-foreground"
                 speed={2}
                 color="hsl(var(--muted-foreground))"

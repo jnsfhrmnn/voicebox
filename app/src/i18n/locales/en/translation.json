@@ -1,4 +1,19 @@
 {
+  "app": {
+    "loading": {
+      "1": "Starting transcription sidecar...",
+      "2": "Loading Whisper model...",
+      "3": "Warming up tensors...",
+      "4": "Preparing audio pipelines...",
+      "5": "Syncing audio buffers...",
+      "6": "Establishing model connections...",
+      "7": "Validating capture storage..."
+    },
+    "startup": {
+      "failed": "Server startup failed",
+      "retry": "Retry"
+    }
+  },
   "common": {
     "cancel": "Cancel",
     "save": "Save",
@@ -96,7 +111,16 @@
       "completed": "Done",
       "stopAria": "Stop recording",
       "errorFallback": "Something went wrong",
-      "errorCopyTooltip": "Click to copy error"
+      "errorCopyTooltip": "Click to copy error",
+      "mode": {
+        "preview": "Preview",
+        "live": "Live"
+      },
+      "modeAria": {
+        "preview": "settings preview, not live",
+        "live": "live state"
+      },
+      "stateAria": "Capture pill ({{mode}}): {{state}}"
     },
     "chord": {
       "capturing": "Capturing…",
@@ -1101,13 +1125,34 @@
           "toCuda": "Switch to CUDA",
           "toCpu": "Switch to CPU"
         },
+        "error": {
+          "title": "Errors",
+          "runtimeLabel": "Server runtime",
+          "artifactLabel": "CUDA add-on",
+          "restartLabel": "Server restart"
+        },
+        "recovery": {
+          "restart": "Restart server",
+          "restarting": "Restarting server …",
+          "restartHint": "Stops and starts the transcription server again. The app keeps running; running jobs may be interrupted."
+        },
+        "availability": {
+          "unknown": "Not available yet – the server status is still loading.",
+          "transition": "Not available while a server operation is running.",
+          "notReady": "Not available – the server is not ready. See the errors above."
+        },
         "work": {
           "title": "Running Work",
           "loading": "Loading…",
           "unavailable": "Task list is currently unavailable.",
           "none": "No active or waiting jobs.",
           "active": "Active",
-          "waiting": "Waiting"
+          "waiting": "Waiting",
+          "loadingTasks": "Loading task list …",
+          "serverStarting": "Server is starting – the task list will follow.",
+          "serverBusy": "A server operation is running; the task list may be incomplete.",
+          "serverNotReady": "Server is not ready – see the errors above.",
+          "loadFailed": "The task list could not be loaded."
         },
         "addon": {
           "title": "CUDA Addon",

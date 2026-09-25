@@ -16,6 +16,14 @@ export type PillState =
   | 'rest'
   | 'error';
 
+/**
+ * Sichtbare Herkunft des Pill-Inhalts (USCRX-2026-16039/16106 Punkt 3):
+ * `preview` = Einstellungs-Vorschau, `live` = tatsächlicher Live-Zustand.
+ * Die Pill kennzeichnet beides IMMER sichtbar (Chip + aria-label), damit
+ * Vorschau und Live-Zustand im Bild nicht verwechselt werden können.
+ */
+export type PillDisplayMode = 'preview' | 'live';
+
 const PILL_LABEL_KEYS: Record<Exclude<PillState, 'rest' | 'error'>, string> = {
   recording: 'captures.pill.recording',
   transcribing: 'captures.pill.transcribing',
@@ -59,6 +67,24 @@ export function PillAudioBars({ mode }: { mode: 'generating' | 'playing' | 'idle
   );
 }
 
+/** Zusatz-Chip: trennt Einstellungs-Vorschau und Live-Zustand immer sichtbar. */
+function ModeChip({ mode }: { mode: PillDisplayMode }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      data-pill-mode={mode}
+      className={cn(
+        'inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+        mode === 'live'
+          ? 'border-accent/50 bg-accent/10 text-accent'
+          : 'border-border bg-muted/60 text-muted-foreground',
+      )}
+    >
+      {t(mode === 'live' ? 'captures.pill.mode.live' : 'captures.pill.mode.preview')}
+    </span>
+  );
+}
+
 function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(total / 60);
@@ -72,6 +98,8 @@ function formatElapsed(ms: number): string {
  * (recording advances the timer, transcribing/refining hold the final value).
  * The ``error`` state renders a destructive variant — a clickable pill that
  * copies its message to the clipboard on press and calls ``onDismiss``.
+ * The pill ALWAYS shows whether it renders the settings preview or the live
+ * state (`displayMode` chip + aria-label) — see ``PillDisplayMode``.
  */
 export function CapturePill({
   state,
@@ -79,6 +107,7 @@ export function CapturePill({
   onStop,
   errorMessage,
   onDismiss,
+  displayMode: displayModeProp,
   className,
 }: {
   state: PillState;
@@ -86,14 +115,24 @@ export function CapturePill({
   onStop?: () => void;
   errorMessage?: string | null;
   onDismiss?: () => void;
+  /** Explizite Herkunftsanzeige (Vorschau vs. Live); siehe `PillDisplayMode`. */
+  displayMode?: PillDisplayMode;
   className?: string;
 }) {
   const { t } = useTranslation();
+
+  // Vorschau vs. Live bleibt IMMER sichtbar (Chip + aria-label). Rufer ohne
+  // explizites `displayMode` gelten nur dann als live, wenn sie eine
+  // Live-Session anbinden (Stop-/Dismiss-/Fehler-Props); die reine
+  // Einstellungs-Vorschau uebergibt ausschliesslich state/elapsedMs.
+  const hasLiveBinding = onStop !== undefined || onDismiss !== undefined || errorMessage !== undefined;
+  const displayMode: PillDisplayMode = displayModeProp ?? (hasLiveBinding ? 'live' : 'preview');
 
   if (state === 'error') {
     return (
       <ErrorPill
         message={errorMessage ?? t('captures.pill.errorFallback')}
+        displayMode={displayMode}
         onDismiss={onDismiss}
         className={className}
       />
@@ -134,6 +173,12 @@ export function CapturePill({
 
   return (
     <div
+      role="status"
+      aria-label={t('captures.pill.stateAria', {
+        mode: t(displayMode === 'live' ? 'captures.pill.modeAria.live' : 'captures.pill.modeAria.preview'),
+        state: labelText,
+      })}
+      data-pill-mode={displayMode}
       className={cn(
         'inline-flex items-center gap-3 px-4 h-10 rounded-full text-accent',
         'bg-white/80 ring-1 ring-black/5 shadow-lg backdrop-blur-xl',
@@ -148,6 +193,7 @@ export function CapturePill({
       <span className="text-sm font-medium shrink-0" style={{ minWidth: '104px' }}>
         {labelText}
       </span>
+      <ModeChip mode={displayMode} />
       <PillAudioBars mode={barMode} />
       <span className="text-xs tabular-nums text-accent/70 font-medium shrink-0 -ml-1">
         {formatElapsed(elapsedMs)}
@@ -158,10 +204,12 @@ export function CapturePill({
 
 function ErrorPill({
   message,
+  displayMode,
   onDismiss,
   className,
 }: {
   message: string;
+  displayMode: PillDisplayMode;
   onDismiss?: () => void;
   className?: string;
 }) {
@@ -181,6 +229,11 @@ function ErrorPill({
       type="button"
       onClick={handleClick}
       title={t('captures.pill.errorCopyTooltip')}
+      aria-label={t('captures.pill.stateAria', {
+        mode: t(displayMode === 'live' ? 'captures.pill.modeAria.live' : 'captures.pill.modeAria.preview'),
+        state: message,
+      })}
+      data-pill-mode={displayMode}
       className={cn(
         'inline-flex items-center gap-2.5 px-4 h-10 rounded-full',
         'bg-white/85 ring-1 ring-destructive/25 shadow-lg backdrop-blur-xl text-red-600 hover:bg-white',
@@ -191,6 +244,7 @@ function ErrorPill({
       )}
     >
       <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+      <ModeChip mode={displayMode} />
       <span className="text-sm font-medium truncate">{message}</span>
     </button>
   );
