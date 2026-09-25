@@ -54,7 +54,7 @@ setup-python:
         {{ pip }} install -r {{ backend_dir }}/requirements-mlx.txt
     fi
     {{ pip }} install git+https://github.com/QwenLM/Qwen3-TTS.git
-    {{ pip }} install pyinstaller ruff pytest pytest-asyncio -q
+    {{ pip }} install "pyinstaller==6.22.3" ruff pytest pytest-asyncio -q
     echo "Python environment ready."
 
 [windows]
@@ -90,7 +90,7 @@ setup-python:
     & "{{ pip }}" install --no-deps chatterbox-tts
     & "{{ pip }}" install --no-deps hume-tada
     & "{{ pip }}" install git+https://github.com/QwenLM/Qwen3-TTS.git
-    & "{{ pip }}" install pyinstaller ruff pytest pytest-asyncio -q
+    & "{{ pip }}" install "pyinstaller==6.22.3" ruff pytest pytest-asyncio -q
     Write-Host "Python environment ready."
 
 # Install JavaScript dependencies

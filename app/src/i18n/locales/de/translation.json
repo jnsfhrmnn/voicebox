@@ -1129,7 +1129,11 @@
           "title": "Fehler",
           "runtimeLabel": "Server-Laufzeit",
           "artifactLabel": "CUDA-Add-on",
-          "restartLabel": "Server-Neustart"
+          "restartLabel": "Server-Neustart",
+          "reasons": {
+            "spawnFehler": "Der Serverprozess konnte nicht gestartet werden.",
+            "bootTimeout": "Der Server wurde nicht rechtzeitig bereit."
+          }
         },
         "recovery": {
           "restart": "Server neu starten",

@@ -1129,7 +1129,11 @@
           "title": "Errors",
           "runtimeLabel": "Server runtime",
           "artifactLabel": "CUDA add-on",
-          "restartLabel": "Server restart"
+          "restartLabel": "Server restart",
+          "reasons": {
+            "spawnFehler": "The server process could not be started.",
+            "bootTimeout": "The server did not become ready in time."
+          }
         },
         "recovery": {
           "restart": "Restart server",

@@ -131,6 +131,16 @@ function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'err' | 'idle'; childr
 }
 
 /**
+ * Deutsche Beschriftung der Supervisor-Grund-Tokens (feste Rust-Vokabel aus
+ * `boot_failed(...)` in main.rs). Unbekannte Tokens bleiben sichtbar roh
+ * (Fallback) — die Liste ist bewusst kein abgeschlossener Klassifikator.
+ */
+const REASON_LABEL_KEYS: Record<string, string> = {
+  spawn_fehler: 'settings.gpu.backend.error.reasons.spawnFehler',
+  boot_timeout: 'settings.gpu.backend.error.reasons.bootTimeout',
+};
+
+/**
  * Betriebsklasse der Runtime-Phase (Debug-String des Supervisor-Automaten,
  * z. B. `CpuReady(3)`, `PreparingCuda(...)`, `NoBackendReady(...)`).
  *
@@ -326,16 +336,20 @@ export function GpuPage() {
           ? 'settings.gpu.backend.availability.unknown'
           : null;
 
-  // Phasenabhängige Zustandsmeldung für „Laufende Arbeit“ statt Blindtext:
-  // Start, laufender Vorgang oder nicht bereites Backend werden benannt.
-  const workMessageKey =
+  // Phasenabhängige Zustandsmeldung für „Laufende Arbeit“ statt Blindtext.
+  // `workBlockKey` ERSETZT die Liste (nicht bereit/Start), `workNoteKey` ist
+  // ein Zusatz über der Liste (laufender Vorgang — „kann unvollständig
+  // sein“ heißt: Liste bleibt sichtbar).
+  const workBlockKey =
     runtimeClass === 'down'
       ? 'settings.gpu.backend.work.serverNotReady'
       : phase && /booting/i.test(phase)
         ? 'settings.gpu.backend.work.serverStarting'
-        : runtimeClass === 'transition'
-          ? 'settings.gpu.backend.work.serverBusy'
-          : null;
+        : null;
+  const workNoteKey =
+    !workBlockKey && runtimeClass === 'transition'
+      ? 'settings.gpu.backend.work.serverBusy'
+      : null;
 
   // Recovery-Pfad: Server ueber das Tauri-Kommando `restart_server` neu starten
   // (application/tauri/src-tauri/src/main.rs). Fehler landen im Fehlerblock.
@@ -375,7 +389,11 @@ export function GpuPage() {
                 <span className="font-medium text-red-600 dark:text-red-400">
                   {t('settings.gpu.backend.error.runtimeLabel')}
                 </span>
-                <span className="break-words text-foreground/90">{runtimeReason}</span>
+                <span className="break-words text-foreground/90">
+                  {REASON_LABEL_KEYS[runtimeReason]
+                    ? t(REASON_LABEL_KEYS[runtimeReason])
+                    : runtimeReason}
+                </span>
               </li>
             )}
             {artifactError && (
@@ -470,8 +488,13 @@ export function GpuPage() {
 
       {/* 2. Laufende Arbeit */}
       <Section title={t('settings.gpu.backend.work.title')}>
-        {workMessageKey ? (
-          <p className="text-xs text-muted-foreground/60">{t(workMessageKey)}</p>
+        {workNoteKey && (
+          <p className="text-xs text-muted-foreground/60" role="status">
+            {t(workNoteKey)}
+          </p>
+        )}
+        {workBlockKey ? (
+          <p className="text-xs text-muted-foreground/60">{t(workBlockKey)}</p>
         ) : tasksQuery.isError ? (
           <p className="text-xs text-muted-foreground/60">{t('settings.gpu.backend.work.loadFailed')}</p>
         ) : tasksQuery.isLoading ? (

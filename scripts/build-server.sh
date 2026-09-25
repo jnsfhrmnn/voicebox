@@ -16,7 +16,9 @@ cd backend
 # Check if PyInstaller is installed
 if ! python -c "import PyInstaller" 2>/dev/null; then
     echo "Installing PyInstaller..."
-    python -m pip install pyinstaller
+    # Build-Vertrag (BUILD.md): die Werkzeugkette ist gepinnt — ein frisches
+    # Venv darf PyInstaller nicht still auf einen neueren Stand heben.
+    python -m pip install "pyinstaller==6.22.3"
 fi
 
 # Create binaries directory if it doesn't exist

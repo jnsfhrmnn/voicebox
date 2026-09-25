@@ -83,6 +83,9 @@ gegen Build-Verzeichnis, `main.rs start_target`).
   sind nur reproduzierbar, solange diese Venvs die Werkzeugkette tragen — vor
   jedem Release die Versionen hier nachziehen (`python --version`,
   `python -c "import PyInstaller; print(PyInstaller.__version__)"`).
+- **Fallback-Install ist gepinnt:** `scripts/build-server.sh` und das `justfile`
+  installieren PyInstaller nur bei Bedarf und dann exakt in Version 6.22.3 —
+  ein frisches Venv darf die Werkzeugkette nicht still heben.
 - **Python-Version nie still wechseln:** das lauffähige Alt-Artefakt stammt von
   Python 3.11, das CPU-Venv ist inzwischen 3.12 — Mischbauten über Venvs hinweg
   waren der Toolchain-Drift des Vorfalls 2026-09-24.

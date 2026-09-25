@@ -87,7 +87,12 @@ def check_artifact(artifact_root: Path, name: str, expect_version: str | None) -
         results.append(("_internal-vollstaendig", True, "onefile-Layout — kein _internal erwartet"))
 
     dll = find_python_dll(artifact_root, name)
-    results.append(("python-dll", dll is not None, str(dll) if dll else "keine python3*-DLL im Artefakt gefunden"))
+    if onedir_dir is None:
+        # onefile: die Python-Laufzeit ist ins Exe gebündelt, eine _internal-
+        # DLL darf hier nie erwartet werden (sonst Fehlalarm am Gate).
+        results.append(("python-dll", True, "onefile-Layout — Python-Laufzeit ist im Artefakt gebündelt"))
+    else:
+        results.append(("python-dll", dll is not None, str(dll) if dll else "keine python3*-DLL im Artefakt gefunden"))
 
     try:
         proc = subprocess.run(
