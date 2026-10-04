@@ -22,7 +22,7 @@ pub struct SwitchContext {
 
 impl SwitchContext {
     /// Zielvariante der Operation.
-        pub fn target_variant(&self) -> BackendVariant {
+    pub fn target_variant(&self) -> BackendVariant {
         match self.direction {
             SwitchDirection::CpuToCuda => BackendVariant::Cuda,
             SwitchDirection::CudaToCpu => BackendVariant::Cpu,
@@ -67,24 +67,40 @@ pub fn run_switch(
 ) -> SwitchOutcome {
     // 1) Drain (B5.2 / B6.1): aktive Jobs drainieren, bis null aktiv.
     if let Err(e) = drain_source() {
-        return fail_closed(&on_failed, format!("drain fehlgeschlagen ({}): {e}", ctx.op_id));
+        return fail_closed(
+            &on_failed,
+            format!("drain fehlgeschlagen ({}): {e}", ctx.op_id),
+        );
     }
     on_drained();
 
     // 2) Teardown des Ausgangs-Backends (B5/B6): graceful Shutdown + Job-Close.
     if let Err(e) = teardown_source() {
-        return fail_closed(&on_failed, format!("teardown fehlgeschlagen ({}): {e}", ctx.op_id));
+        return fail_closed(
+            &on_failed,
+            format!("teardown fehlgeschlagen ({}): {e}", ctx.op_id),
+        );
     }
 
     // 3) Zielstart mit inaktivem Lease + Handshake (B5.4 / B6.2).
     let instance = match start_target() {
         Ok(i) => i,
-        Err(e) => return fail_closed(&on_failed, format!("Zielstart fehlgeschlagen ({}): {e}", ctx.op_id)),
+        Err(e) => {
+            return fail_closed(
+                &on_failed,
+                format!("Zielstart fehlgeschlagen ({}): {e}", ctx.op_id),
+            )
+        }
     };
 
     // 4) Readiness-Smoke (B5.5/B6.2): echte Inferenz + Modell-/Variant-Vertrag.
     if let Err(e) = readiness_smoke(&instance) {
-        return fail_after_start(&on_failed, &teardown_target, &instance, format!("Readiness fehlgeschlagen ({}): {e}", ctx.op_id));
+        return fail_after_start(
+            &on_failed,
+            &teardown_target,
+            &instance,
+            format!("Readiness fehlgeschlagen ({}): {e}", ctx.op_id),
+        );
     }
 
     // 5) VRAM-Evidence (B6.6–7): nur CudaToCpu — NVML doppelte negative Probe,
@@ -129,7 +145,10 @@ pub fn run_switch_steps(
     on_drained: impl Fn(),
     on_target_ready: impl Fn(SidecarInstance),
     on_failed: impl Fn(String),
-) -> (SwitchOutcome, crate::backend::switch_evidence::SwitchEvidence) {
+) -> (
+    SwitchOutcome,
+    crate::backend::switch_evidence::SwitchEvidence,
+) {
     use crate::backend::gpu_evidence::GpuReceipt;
     use crate::backend::switch_evidence::{run_release_verification, PhaseName, ReleaseOutcome};
     use std::sync::{Arc, Mutex};
@@ -175,42 +194,43 @@ pub fn run_switch_steps(
 
     // 5) VRAM-Evidence (B6.6–7): nur Ziel CPU = CudaToCpu. Der Freigabe-Zyklus
     //    zeichnet jede Probe in das Journal und verlangt zwei grüne Proben.
-    let vram: Option<Box<dyn Fn(&SidecarInstance) -> Result<(), String>>> =
-        if ctx.target_variant() == BackendVariant::Cpu {
-            let (ev_v, s_v) = (Arc::clone(&ev), Arc::clone(&steps));
-            Some(Box::new(move |_i: &SidecarInstance| {
-                let pid = old_cuda_pid
-                    .ok_or_else(|| "VRAM-Evidence unmöglich: kein bekannter CUDA-PID".to_string())?;
-                let mut receipt = GpuReceipt::for_pids([pid]);
-                for _attempt in 0..3u32 {
-                    let out = {
-                        let mut e = ev_v.lock().unwrap();
-                        run_release_verification(&mut receipt, &mut *e, min_interval, || {
-                            s_v.vram_probe()
-                        })
-                    };
-                    match out {
-                        ReleaseOutcome::Released { attributable_mib } => {
-                            return if attributable_mib == 0 {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "0-MiB-Ableitung verweigert: {attributable_mib} MiB zurechenbar"
-                                ))
-                            };
-                        }
-                        // Erste grüne Probe: Mindestabstand einhalten, erneut proben.
-                        ReleaseOutcome::Pending => std::thread::sleep(min_interval),
-                        ReleaseOutcome::ProbeError(reason) => {
-                            return Err(format!("VRAM-Evidence fehlgeschlagen: {reason}"));
-                        }
+    let vram: Option<Box<dyn Fn(&SidecarInstance) -> Result<(), String>>> = if ctx.target_variant()
+        == BackendVariant::Cpu
+    {
+        let (ev_v, s_v) = (Arc::clone(&ev), Arc::clone(&steps));
+        Some(Box::new(move |_i: &SidecarInstance| {
+            let pid = old_cuda_pid
+                .ok_or_else(|| "VRAM-Evidence unmöglich: kein bekannter CUDA-PID".to_string())?;
+            let mut receipt = GpuReceipt::for_pids([pid]);
+            for _attempt in 0..3u32 {
+                let out = {
+                    let mut e = ev_v.lock().unwrap();
+                    run_release_verification(&mut receipt, &mut *e, min_interval, || {
+                        s_v.vram_probe()
+                    })
+                };
+                match out {
+                    ReleaseOutcome::Released { attributable_mib } => {
+                        return if attributable_mib == 0 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "0-MiB-Ableitung verweigert: {attributable_mib} MiB zurechenbar"
+                            ))
+                        };
+                    }
+                    // Erste grüne Probe: Mindestabstand einhalten, erneut proben.
+                    ReleaseOutcome::Pending => std::thread::sleep(min_interval),
+                    ReleaseOutcome::ProbeError(reason) => {
+                        return Err(format!("VRAM-Evidence fehlgeschlagen: {reason}"));
                     }
                 }
-                Err("VRAM-Freigabe nicht abgeschlossen (kein zweiter grüner Nachweis)".into())
-            }))
-        } else {
-            None
-        };
+            }
+            Err("VRAM-Freigabe nicht abgeschlossen (kein zweiter grüner Nachweis)".into())
+        }))
+    } else {
+        None
+    };
 
     // Fail-closed nach Zielstart (B5.8/B6.8): frisch gestartetes Ziel beenden.
     let s_tt = Arc::clone(&steps);
@@ -276,7 +296,10 @@ pub trait SwitchStepFactory: Send + Sync {
     /// bleibt als Closure/Schnittstelle injizierbar (Tests ohne CUDA-Hardware).
     fn vram_probe(
         &self,
-    ) -> Result<crate::backend::gpu_evidence::GpuContextProbe, crate::backend::gpu_evidence::GpuEvidenceError>;
+    ) -> Result<
+        crate::backend::gpu_evidence::GpuContextProbe,
+        crate::backend::gpu_evidence::GpuEvidenceError,
+    >;
     /// Fail-closed nach Zielstart (B5.8/B6.8): frisch gestartetes Ziel beenden.
     fn teardown_target(&self, instance: &SidecarInstance);
 }
@@ -285,7 +308,9 @@ pub trait SwitchStepFactory: Send + Sync {
 mod tests {
     use super::*;
     use crate::backend::gpu_evidence::{ComputeProcess, GpuContextProbe, GpuEvidenceError};
-    use crate::backend::switch_evidence::{read_journal_in, PhaseName, SwitchEvidence, SwitchResult};
+    use crate::backend::switch_evidence::{
+        read_journal_in, PhaseName, SwitchEvidence, SwitchResult,
+    };
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -303,14 +328,26 @@ mod tests {
     }
 
     fn inst() -> SidecarInstance {
-        SidecarInstance::new(4242, "cuda.exe".into(), BackendVariant::Cuda, 51000, "build-1".into())
+        SidecarInstance::new(
+            4242,
+            "cuda.exe".into(),
+            BackendVariant::Cuda,
+            51000,
+            "build-1".into(),
+        )
     }
 
     fn ctx_cuda_to_cpu() -> SwitchContext {
-        SwitchContext { op_id: "op-1".into(), direction: SwitchDirection::CudaToCpu }
+        SwitchContext {
+            op_id: "op-1".into(),
+            direction: SwitchDirection::CudaToCpu,
+        }
     }
     fn ctx_cpu_to_cuda() -> SwitchContext {
-        SwitchContext { op_id: "op-2".into(), direction: SwitchDirection::CpuToCuda }
+        SwitchContext {
+            op_id: "op-2".into(),
+            direction: SwitchDirection::CpuToCuda,
+        }
     }
 
     /// Happy Path CudaToCpu: volle Sequenz inkl. VRAM-Evidence, kein Failure.
@@ -319,10 +356,10 @@ mod tests {
         let (log, v) = Log::new();
         let out = run_switch(
             &ctx_cuda_to_cpu(),
-            || Ok(()), // drain
-            || Ok(()), // teardown_source
-            || Ok(inst()), // start_target
-            |_| Ok(()), // readiness
+            || Ok(()),                  // drain
+            || Ok(()),                  // teardown_source
+            || Ok(inst()),              // start_target
+            |_| Ok(()),                 // readiness
             Some(Box::new(|_| Ok(()))), // vram_evidence (CudaToCpu)
             |i| log.rec(&format!("teardown_target:{}", i.pid)),
             || log.rec("drained"),
@@ -331,7 +368,11 @@ mod tests {
         );
         assert_eq!(out, SwitchOutcome::Completed);
         let seq = v.lock().unwrap().clone();
-        assert_eq!(seq, vec!["drained", "ready:4242"], "Sequenz + Callback-Reihenfolge");
+        assert_eq!(
+            seq,
+            vec!["drained", "ready:4242"],
+            "Sequenz + Callback-Reihenfolge"
+        );
     }
 
     /// CpuToCuda: keine VRAM-Evidence (nur CudaToCpu), aber sonst identisch.
@@ -347,11 +388,17 @@ mod tests {
             None, // CpuToCuda: keine VRAM-Evidence
             |_| {},
             || {},
-            |i| { *ready_pid.lock().unwrap() = i.pid; },
+            |i| {
+                *ready_pid.lock().unwrap() = i.pid;
+            },
             |_| panic!("darf nicht fehlschlagen"),
         );
         assert_eq!(out, SwitchOutcome::Completed);
-        assert_eq!(*ready_pid.lock().unwrap(), 4242, "on_target_ready muss die Instanz liefern");
+        assert_eq!(
+            *ready_pid.lock().unwrap(),
+            4242,
+            "on_target_ready muss die Instanz liefern"
+        );
     }
 
     /// Drain-Fehler → fail-closed VOR Teardown/Start; kein Ziel-Teardown.
@@ -372,7 +419,11 @@ mod tests {
         );
         assert!(matches!(out, SwitchOutcome::Failed(_)));
         let seq = v.lock().unwrap().clone();
-        assert_eq!(seq.len(), 1, "nur on_failed, kein drained/ready/target-teardown");
+        assert_eq!(
+            seq.len(),
+            1,
+            "nur on_failed, kein drained/ready/target-teardown"
+        );
         assert!(seq[0].starts_with("failed:drain fehlgeschlagen"));
     }
 
@@ -396,7 +447,10 @@ mod tests {
         let seq = v.lock().unwrap().clone();
         // drained kam (vor Start), dann Ziel-Teardown, dann failed — kein ready.
         assert_eq!(seq[0], "drained");
-        assert_eq!(seq[1], "teardown_target:4242", "Ziel muss bei Readiness-Fehler beendet werden");
+        assert_eq!(
+            seq[1], "teardown_target:4242",
+            "Ziel muss bei Readiness-Fehler beendet werden"
+        );
         assert!(seq[2].starts_with("failed:Readiness fehlgeschlagen"));
         assert!(!seq.iter().any(|s| s == "ready"), "kein ready nach Fehler");
     }
@@ -410,7 +464,7 @@ mod tests {
             || Ok(()),
             || Ok(()),
             || Ok(inst()),
-            |_| Ok(()), // readiness grün
+            |_| Ok(()),                                 // readiness grün
             Some(Box::new(|_| Err("nvml rot".into()))), // vram schlägt fehl
             |i| log.rec(&format!("teardown_target:{}", i.pid)),
             || log.rec("drained"),
@@ -470,7 +524,11 @@ mod tests {
 
     impl FakeFactory {
         fn new(log: Arc<Mutex<Vec<String>>>, probes: Vec<GpuContextProbe>) -> Self {
-            Self { log, probes: Arc::new(Mutex::new(probes)), fail_readiness: false }
+            Self {
+                log,
+                probes: Arc::new(Mutex::new(probes)),
+                fail_readiness: false,
+            }
         }
         fn rec(&self, s: &str) {
             self.log.lock().unwrap().push(s.to_string());
@@ -524,7 +582,12 @@ mod tests {
     }
 
     fn glue_evidence(op_id: &str) -> SwitchEvidence {
-        SwitchEvidence::new(op_id.into(), SwitchDirection::CudaToCpu, "epoch-1".into(), 5)
+        SwitchEvidence::new(
+            op_id.into(),
+            SwitchDirection::CudaToCpu,
+            "epoch-1".into(),
+            5,
+        )
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -539,9 +602,14 @@ mod tests {
     #[test]
     fn glue_kompletter_zyklus_schreibt_vollstaendige_evidenz() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let factory: Arc<dyn SwitchStepFactory> =
-            Arc::new(FakeFactory::new(log.clone(), vec![green_probe(), green_probe()]));
-        let ctx = SwitchContext { op_id: "op-glue-1".into(), direction: SwitchDirection::CudaToCpu };
+        let factory: Arc<dyn SwitchStepFactory> = Arc::new(FakeFactory::new(
+            log.clone(),
+            vec![green_probe(), green_probe()],
+        ));
+        let ctx = SwitchContext {
+            op_id: "op-glue-1".into(),
+            direction: SwitchDirection::CudaToCpu,
+        };
         let (outcome, ev) = run_switch_steps(
             &ctx,
             factory,
@@ -557,18 +625,37 @@ mod tests {
         let seq = log.lock().unwrap().clone();
         assert_eq!(
             seq,
-            vec!["drain", "teardown_source", "start_target", "readiness_smoke", "vram_probe", "vram_probe"],
+            vec![
+                "drain",
+                "teardown_source",
+                "start_target",
+                "readiness_smoke",
+                "vram_probe",
+                "vram_probe"
+            ],
             "Schritt-Reihenfolge des kompletten Prozesszyklus"
         );
 
         let dir = temp_dir("glue-full");
-        let path = ev.finish_in(&dir, SwitchResult::Success).expect("Journal schreibbar");
+        let path = ev
+            .finish_in(&dir, SwitchResult::Success)
+            .expect("Journal schreibbar");
         assert!(path.exists());
         let j = read_journal_in(&dir, "op-glue-1").expect("Journal lesbar");
         assert_eq!(j.result, SwitchResult::Success);
-        assert_eq!(j.to_generation, Some(6), "Zielgeneration ist im Journal gebunden");
-        assert!(j.job_tree_terminated, "Job-Object-Kill des Ausgangsbaums aufgezeichnet");
-        assert!(j.process_end_confirmed, "Prozessende des Ausgangs bestaetigt");
+        assert_eq!(
+            j.to_generation,
+            Some(6),
+            "Zielgeneration ist im Journal gebunden"
+        );
+        assert!(
+            j.job_tree_terminated,
+            "Job-Object-Kill des Ausgangsbaums aufgezeichnet"
+        );
+        assert!(
+            j.process_end_confirmed,
+            "Prozessende des Ausgangs bestaetigt"
+        );
         let names: Vec<PhaseName> = j.phases.iter().map(|p| p.phase).collect();
         for expected in [
             PhaseName::Admitted,
@@ -578,11 +665,18 @@ mod tests {
             PhaseName::ModelReady,
             PhaseName::VramCheck,
         ] {
-            assert!(names.contains(&expected), "Phase {expected:?} fehlt im Journal");
+            assert!(
+                names.contains(&expected),
+                "Phase {expected:?} fehlt im Journal"
+            );
         }
         assert_eq!(j.vram_probes.len(), 2, "AC-G: zwei Proben, PID-gebunden");
         assert!(j.vram_probes.iter().all(|p| p.green));
-        assert_eq!(j.vram_probes[1].attributable_mib, Some(0), "0 MiB erst nach Abschluss");
+        assert_eq!(
+            j.vram_probes[1].attributable_mib,
+            Some(0),
+            "0 MiB erst nach Abschluss"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -590,7 +684,8 @@ mod tests {
     #[test]
     fn glue_cpu_to_cuda_ohne_vram_schritt() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let factory: Arc<dyn SwitchStepFactory> = Arc::new(FakeFactory::new(log.clone(), Vec::new()));
+        let factory: Arc<dyn SwitchStepFactory> =
+            Arc::new(FakeFactory::new(log.clone(), Vec::new()));
         let ctx = ctx_cpu_to_cuda();
         let (outcome, ev) = run_switch_steps(
             &ctx,
@@ -605,12 +700,24 @@ mod tests {
         );
         assert_eq!(outcome, SwitchOutcome::Completed);
         let seq = log.lock().unwrap().clone();
-        assert_eq!(seq, vec!["drain", "teardown_source", "start_target", "readiness_smoke"]);
+        assert_eq!(
+            seq,
+            vec![
+                "drain",
+                "teardown_source",
+                "start_target",
+                "readiness_smoke"
+            ]
+        );
         let dir = temp_dir("glue-cpu2cuda");
-        ev.finish_in(&dir, SwitchResult::Success).expect("Journal schreibbar");
+        ev.finish_in(&dir, SwitchResult::Success)
+            .expect("Journal schreibbar");
         let j = read_journal_in(&dir, "op-glue-2").expect("Journal lesbar");
         let names: Vec<PhaseName> = j.phases.iter().map(|p| p.phase).collect();
-        assert!(!names.contains(&PhaseName::VramCheck), "VramCheck nur bei CudaToCpu");
+        assert!(
+            !names.contains(&PhaseName::VramCheck),
+            "VramCheck nur bei CudaToCpu"
+        );
         assert!(j.vram_probes.is_empty());
         assert_eq!(j.to_generation, Some(7));
         let _ = std::fs::remove_dir_all(&dir);
@@ -624,7 +731,10 @@ mod tests {
         let mut fake = FakeFactory::new(log.clone(), Vec::new());
         fake.fail_readiness = true;
         let factory: Arc<dyn SwitchStepFactory> = Arc::new(fake);
-        let ctx = SwitchContext { op_id: "op-glue-3".into(), direction: SwitchDirection::CudaToCpu };
+        let ctx = SwitchContext {
+            op_id: "op-glue-3".into(),
+            direction: SwitchDirection::CudaToCpu,
+        };
         let reason = Arc::new(Mutex::new(None));
         let reason_c = Arc::clone(&reason);
         let (outcome, ev) = run_switch_steps(
@@ -644,13 +754,27 @@ mod tests {
         let seq = log.lock().unwrap().clone();
         assert_eq!(
             seq,
-            vec!["drain", "teardown_source", "start_target", "readiness_smoke", "teardown_target:4242"],
+            vec![
+                "drain",
+                "teardown_source",
+                "start_target",
+                "readiness_smoke",
+                "teardown_target:4242"
+            ],
             "Ziel wird bei Readiness-Fehler beendet (fail-closed)"
         );
-        assert!(reason.lock().unwrap().as_deref().unwrap_or("").contains("Readiness fehlgeschlagen"));
+        assert!(reason
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or("")
+            .contains("Readiness fehlgeschlagen"));
         let dir = temp_dir("glue-fail");
-        ev.finish_in(&dir, SwitchResult::Failure("Readiness fehlgeschlagen: health rot".into()))
-            .expect("Fehlerjournal schreibbar");
+        ev.finish_in(
+            &dir,
+            SwitchResult::Failure("Readiness fehlgeschlagen: health rot".into()),
+        )
+        .expect("Fehlerjournal schreibbar");
         let j = read_journal_in(&dir, "op-glue-3").expect("Journal lesbar");
         assert_eq!(j.to_generation, None, "keine Zielgeneration bei Fehler");
         assert_eq!(j.result.as_str(), "failure");
@@ -662,8 +786,12 @@ mod tests {
     #[test]
     fn glue_ohne_knownen_cuda_pid_ist_fail_closed() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let factory: Arc<dyn SwitchStepFactory> = Arc::new(FakeFactory::new(log.clone(), Vec::new()));
-        let ctx = SwitchContext { op_id: "op-glue-4".into(), direction: SwitchDirection::CudaToCpu };
+        let factory: Arc<dyn SwitchStepFactory> =
+            Arc::new(FakeFactory::new(log.clone(), Vec::new()));
+        let ctx = SwitchContext {
+            op_id: "op-glue-4".into(),
+            direction: SwitchDirection::CudaToCpu,
+        };
         let (outcome, _ev) = run_switch_steps(
             &ctx,
             factory,
@@ -676,13 +804,21 @@ mod tests {
             |_| {},
         );
         match outcome {
-            SwitchOutcome::Failed(r) => assert!(r.contains("kein bekannter CUDA-PID"), "Grund: {r}"),
+            SwitchOutcome::Failed(r) => {
+                assert!(r.contains("kein bekannter CUDA-PID"), "Grund: {r}")
+            }
             other => panic!("erwarteter Fail-closed, bekam {other:?}"),
         }
         let seq = log.lock().unwrap().clone();
         assert_eq!(
             seq,
-            vec!["drain", "teardown_source", "start_target", "readiness_smoke", "teardown_target:4242"]
+            vec![
+                "drain",
+                "teardown_source",
+                "start_target",
+                "readiness_smoke",
+                "teardown_target:4242"
+            ]
         );
     }
 }

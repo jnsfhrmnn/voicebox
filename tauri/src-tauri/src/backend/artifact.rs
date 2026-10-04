@@ -121,7 +121,10 @@ impl Manifest {
         let mut seen = HashSet::new();
         for f in &self.files {
             if f.path.is_empty() || !seen.insert(f.path.clone()) {
-                return Err(format!("Inventar unvollständig: '{}' fehlt oder doppelt", f.path));
+                return Err(format!(
+                    "Inventar unvollständig: '{}' fehlt oder doppelt",
+                    f.path
+                ));
             }
         }
         Ok(())
@@ -216,7 +219,9 @@ impl Manager {
             return Ok(None);
         }
         let raw = std::fs::read_to_string(&p).map_err(|e| format!("current.json lesbar: {e}"))?;
-        serde_json::from_str(&raw).map(Some).map_err(|e| format!("current.json ungültig: {e}"))
+        serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|e| format!("current.json ungültig: {e}"))
     }
 
     /// Installations-Pipeline (B9) aus dem eingebetteten Releasepfad: Download
@@ -225,7 +230,10 @@ impl Manager {
     /// der jf-whisper-Releasepfad wird angesprochen (B9).
     pub fn install_release(&self, progress: impl Fn(&str)) -> Result<InstalledBuild, String> {
         let base_url = Self::release_base_url();
-        let staging = self.base_dir.join(".staging").join(uuid::Uuid::new_v4().to_string());
+        let staging = self
+            .base_dir
+            .join(".staging")
+            .join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&staging).map_err(|e| format!("Staging-Verzeichnis: {e}"))?;
 
         // 1) Manifest + Signatur laden und verifizieren (fail-closed).
@@ -282,7 +290,8 @@ impl Manager {
         // 3) Sichere Extraktion mit Dateiverifikation (Größe + SHA-256 je Datei).
         progress("extracting");
         let extract_dir = staging.join("extracted");
-        std::fs::create_dir_all(&extract_dir).map_err(|e| format!("Extraktionsverzeichnis: {e}"))?;
+        std::fs::create_dir_all(&extract_dir)
+            .map_err(|e| format!("Extraktionsverzeichnis: {e}"))?;
         self.extract_verified(archive_path, &manifest, &extract_dir)?;
 
         // 5) Commit: Umbenennen auf versioniertes Ziel + atomares current.json.
@@ -356,15 +365,20 @@ impl Manager {
         let public_key = minisign_verify::PublicKey::from_base64(&key_b64)
             .map_err(|e| format!("eingebetteter Public Key ungültig: {e}"))?;
 
-        let manifest_raw = std::fs::read(manifest_path).map_err(|e| format!("Manifest lesen: {e}"))?;
+        let manifest_raw =
+            std::fs::read(manifest_path).map_err(|e| format!("Manifest lesen: {e}"))?;
         let sig_path = manifest_path.with_file_name(format!(
             "{}.sig",
-            manifest_path.file_name().and_then(|n| n.to_str()).unwrap_or("manifest.json")
+            manifest_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("manifest.json")
         ));
         if !sig_path.exists() {
             return Err("Manifest-Signatur fehlt im Releasepfad".into());
         }
-        let sig_raw = std::fs::read_to_string(&sig_path).map_err(|e| format!("Signatur lesen: {e}"))?;
+        let sig_raw =
+            std::fs::read_to_string(&sig_path).map_err(|e| format!("Signatur lesen: {e}"))?;
         let signature = minisign_verify::Signature::decode(&sig_raw)
             .map_err(|e| format!("Manifest-Signatur dekodieren: {e}"))?;
 
@@ -375,7 +389,9 @@ impl Manager {
         for chunk in manifest_raw.chunks(65536) {
             verifier.update(chunk);
         }
-        verifier.finalize().map_err(|e| format!("Manifest-Signatur ungültig: {e}"))?;
+        verifier
+            .finalize()
+            .map_err(|e| format!("Manifest-Signatur ungültig: {e}"))?;
 
         serde_json::from_slice(&manifest_raw).map_err(|e| format!("Manifest JSON ungültig: {e}"))
     }
@@ -393,33 +409,42 @@ impl Manager {
         // Signatur liegt neben dem Archiv als <name>.sig (Releasepfad-Konvention).
         let sig_path = archive_path.with_file_name(format!(
             "{}.sig",
-            archive_path.file_name().and_then(|n| n.to_str()).unwrap_or("archive")
+            archive_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("archive")
         ));
         if !sig_path.exists() {
             return Err("Signaturdatei fehlt im Releasepfad".into());
         }
-        let sig_raw = std::fs::read_to_string(&sig_path).map_err(|e| format!("Signatur lesen: {e}"))?;
+        let sig_raw =
+            std::fs::read_to_string(&sig_path).map_err(|e| format!("Signatur lesen: {e}"))?;
         let signature = minisign_verify::Signature::decode(&sig_raw)
             .map_err(|e| format!("Signatur dekodieren: {e}"))?;
 
         // Ein Durchgang: Minisign-Stream (Prehashed/Blake2b) + SHA-256 für die
         // Manifest-Bindung. allow_legacy ist hier strukturell ausgeschlossen —
         // verify_stream akzeptiert nur Prehashed-Signaturen (B9).
-        let mut file = std::fs::File::open(archive_path).map_err(|e| format!("Archiv lesen: {e}"))?;
+        let mut file =
+            std::fs::File::open(archive_path).map_err(|e| format!("Archiv lesen: {e}"))?;
         let mut verifier = public_key
             .verify_stream(&signature)
             .map_err(|e| format!("Minisign-Stream-Setup (nur Prehashed erlaubt): {e}"))?;
         let mut sha = Sha256::new();
         let mut buf = [0u8; 65536];
         loop {
-            let n = file.read(&mut buf).map_err(|e| format!("Archiv lesen: {e}"))?;
+            let n = file
+                .read(&mut buf)
+                .map_err(|e| format!("Archiv lesen: {e}"))?;
             if n == 0 {
                 break;
             }
             verifier.update(&buf[..n]);
             sha.update(&buf[..n]);
         }
-        verifier.finalize().map_err(|e| format!("Minisign-Signatur ungültig: {e}"))?;
+        verifier
+            .finalize()
+            .map_err(|e| format!("Minisign-Signatur ungültig: {e}"))?;
 
         // Archiv-Hash muss zum Manifest passen (doppelte Bindung).
         let hex = hex_lower(&sha.finalize());
@@ -460,7 +485,12 @@ impl Manager {
 
     /// Sichere Extraktion: lehnt absolute Pfade, `..`, Symlinks/Hardlinks und
     /// unbekannte Dateien ab; verifiziert Größe + SHA-256 je Datei (B9).
-    fn extract_verified(&self, archive_path: &Path, manifest: &Manifest, dest: &Path) -> Result<(), String> {
+    fn extract_verified(
+        &self,
+        archive_path: &Path,
+        manifest: &Manifest,
+        dest: &Path,
+    ) -> Result<(), String> {
         let file = std::fs::File::open(archive_path).map_err(|e| format!("Archiv öffnen: {e}"))?;
         let gz = GzDecoder::new(file);
         let mut archive = tar::Archive::new(gz);
@@ -474,7 +504,10 @@ impl Manager {
             .collect();
 
         let mut unpacked_total: u64 = 0;
-        for entry in archive.entries().map_err(|e| format!("Tar-Einträge: {e}"))? {
+        for entry in archive
+            .entries()
+            .map_err(|e| format!("Tar-Einträge: {e}"))?
+        {
             let mut entry = entry.map_err(|e| format!("Tar-Entry: {e}"))?;
 
             // Symlinks/Hardlinks/Device/FIFO sind im Addon verboten (B9).
@@ -521,12 +554,15 @@ impl Manager {
             }
 
             // Datei streamen + Hash/Größe verifizieren.
-            let mut out = std::fs::File::create(&out_path).map_err(|e| format!("Datei anlegen: {e}"))?;
+            let mut out =
+                std::fs::File::create(&out_path).map_err(|e| format!("Datei anlegen: {e}"))?;
             let mut hasher = Sha256::new();
             let mut size: u64 = 0;
             let mut buf = [0u8; 65536];
             loop {
-                let n = entry.read(&mut buf).map_err(|e| format!("Tar lesen: {e}"))?;
+                let n = entry
+                    .read(&mut buf)
+                    .map_err(|e| format!("Tar lesen: {e}"))?;
                 if n == 0 {
                     break;
                 }
@@ -539,7 +575,8 @@ impl Manager {
                     ));
                 }
                 hasher.update(&buf[..n]);
-                out.write_all(&buf[..n]).map_err(|e| format!("Datei schreiben: {e}"))?;
+                out.write_all(&buf[..n])
+                    .map_err(|e| format!("Datei schreiben: {e}"))?;
             }
             if size != inv.size {
                 return Err(format!(
@@ -611,7 +648,9 @@ impl Manager {
         // Staging-Reste räumen.
         let staging_root = self.base_dir.join(".staging");
         if staging_root.exists() {
-            for entry in std::fs::read_dir(&staging_root).map_err(|e| format!("Staging lesen: {e}"))? {
+            for entry in
+                std::fs::read_dir(&staging_root).map_err(|e| format!("Staging lesen: {e}"))?
+            {
                 let entry = entry.map_err(|e| format!("Staging-Eintrag: {e}"))?;
                 if entry.file_type().is_ok_and(|t| t.is_dir()) {
                     let _ = std::fs::remove_dir_all(entry.path());
@@ -624,7 +663,8 @@ impl Manager {
         for entry in std::fs::read_dir(&cuda_dir).map_err(|e| format!("CUDA lesen: {e}"))? {
             let entry = entry.map_err(|e| format!("CUDA-Eintrag: {e}"))?;
             if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                std::fs::remove_dir_all(entry.path()).map_err(|e| format!("Build entfernen: {e}"))?;
+                std::fs::remove_dir_all(entry.path())
+                    .map_err(|e| format!("Build entfernen: {e}"))?;
             } else {
                 std::fs::remove_file(entry.path()).map_err(|e| format!("Datei entfernen: {e}"))?;
             }
@@ -644,7 +684,9 @@ impl Manager {
 /// Der ~512-B-Platzhalter von setup-dev-sidecar.js ist nicht ausführbar; jede
 /// Auflösungsstufe der Sidecar-Binary (CPU wie CUDA) verlangt > 10 KB Dateigröße.
 pub fn is_startable_artifact(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.len() > 10_000).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.len() > 10_000)
+        .unwrap_or(false)
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -720,7 +762,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let small = tmp.path().join("placeholder.exe");
         std::fs::write(&small, vec![0u8; 512]).unwrap();
-        assert!(!is_startable_artifact(&small), "512-B-Platzhalter darf nie gelten");
+        assert!(
+            !is_startable_artifact(&small),
+            "512-B-Platzhalter darf nie gelten"
+        );
         let real = tmp.path().join("real.exe");
         std::fs::write(&real, vec![0u8; 10_001]).unwrap();
         assert!(is_startable_artifact(&real), "echtes Artefakt muss gelten");
@@ -742,7 +787,9 @@ mod tests {
                 h.set_size(content.len() as u64);
                 h.set_mode(0o755);
                 h.set_cksum();
-                builder.append_data(&mut h, path, content.as_bytes()).unwrap();
+                builder
+                    .append_data(&mut h, path, content.as_bytes())
+                    .unwrap();
             }
             if extra_symlink {
                 let mut h = tar::Header::new_gnu();
@@ -799,18 +846,14 @@ mod tests {
         let pk_b64 = base64::engine::general_purpose::STANDARD.encode(kp.pk.to_bytes());
 
         let manifest_json = serde_json::to_string_pretty(&manifest).unwrap();
-        let manifest_sig = minisign::sign(Some(&kp.pk), &kp.sk, manifest_json.as_bytes(), None, None)
-            .unwrap();
-        let archive_sig = minisign::sign(Some(&kp.pk), &kp.sk, archive.as_slice(), None, None)
-            .unwrap();
+        let manifest_sig =
+            minisign::sign(Some(&kp.pk), &kp.sk, manifest_json.as_bytes(), None, None).unwrap();
+        let archive_sig =
+            minisign::sign(Some(&kp.pk), &kp.sk, archive.as_slice(), None, None).unwrap();
 
         std::fs::create_dir_all(staging).unwrap();
         std::fs::write(staging.join("manifest.json"), manifest_json).unwrap();
-        std::fs::write(
-            staging.join("manifest.json.sig"),
-            manifest_sig.to_string(),
-        )
-        .unwrap();
+        std::fs::write(staging.join("manifest.json.sig"), manifest_sig.to_string()).unwrap();
         let archive_path = staging.join(&manifest.archive_name);
         std::fs::write(&archive_path, &archive).unwrap();
         std::fs::write(
@@ -875,7 +918,10 @@ mod tests {
         let err = manager
             .install_from_paths(&archive_path, &staging.join("manifest.json"), |_| {})
             .expect_err("Manipuliertes Archiv muss abgelehnt werden");
-        assert!(err.contains("Signatur") || err.contains("Hash"), "unerwarteter Fehler: {err}");
+        assert!(
+            err.contains("Signatur") || err.contains("Hash"),
+            "unerwarteter Fehler: {err}"
+        );
 
         // Fail-closed: kein Current-Pointer, kein Build.
         assert!(manager.current().unwrap().is_none());
@@ -898,7 +944,10 @@ mod tests {
         let err = manager
             .install_from_paths(&archive_path, &staging.join("manifest.json"), |_| {})
             .expect_err("Manipuliertes Manifest muss abgelehnt werden");
-        assert!(err.contains("Manifest-Signatur"), "unerwarteter Fehler: {err}");
+        assert!(
+            err.contains("Manifest-Signatur"),
+            "unerwarteter Fehler: {err}"
+        );
 
         // Fail-closed: kein Current-Pointer.
         assert!(manager.current().unwrap().is_none());
@@ -921,7 +970,10 @@ mod tests {
         let err = manager
             .install_from_paths(&archive_path, &staging.join("manifest.json"), |_| {})
             .expect_err("Unbekannte Datei muss abgelehnt werden");
-        assert!(err.contains("unbekannte Datei"), "unerwarteter Fehler: {err}");
+        assert!(
+            err.contains("unbekannte Datei"),
+            "unerwarteter Fehler: {err}"
+        );
     }
 
     #[test]
@@ -935,7 +987,10 @@ mod tests {
         let err = manager
             .install_from_paths(&archive_path, &staging.join("manifest.json"), |_| {})
             .expect_err("Symlink-Eintrag muss abgelehnt werden");
-        assert!(err.contains("verbotener Tar-Eintragstyp"), "unerwarteter Fehler: {err}");
+        assert!(
+            err.contains("verbotener Tar-Eintragstyp"),
+            "unerwarteter Fehler: {err}"
+        );
     }
 
     #[test]
@@ -1054,7 +1109,8 @@ mod tests {
             api_contract_version: 1,
             result_contract_version: 1,
             archive_name: "jf-whisper-cuda-0.5.0.tar.gz".into(),
-            archive_url: "https://releases.jfwhisper.de/cuda/0.5.0/jf-whisper-cuda-0.5.0.tar.gz".into(),
+            archive_url: "https://releases.jfwhisper.de/cuda/0.5.0/jf-whisper-cuda-0.5.0.tar.gz"
+                .into(),
             compressed_size: 1024,
             max_unpacked_size: 4096,
             sha256_hex: "ee".into(),

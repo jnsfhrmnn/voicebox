@@ -68,15 +68,21 @@ impl GpuContextProbe {
     /// NVML initialisieren und das erste Gerät proben. Fail-closed.
     pub fn capture() -> Result<Self, GpuEvidenceError> {
         let nvml = Nvml::init().map_err(|e| GpuEvidenceError::NvmlInit(e.to_string()))?;
-        let count = nvml.device_count().map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
+        let count = nvml
+            .device_count()
+            .map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
         if count == 0 {
             return Err(GpuEvidenceError::NoDevice);
         }
         let device = nvml
             .device_by_index(0)
             .map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
-        let name = device.name().map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
-        let mem = device.memory_info().map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
+        let name = device
+            .name()
+            .map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
+        let mem = device
+            .memory_info()
+            .map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
         let procs = device
             .running_compute_processes()
             .map_err(|e| GpuEvidenceError::Query(e.to_string()))?;
@@ -92,7 +98,9 @@ impl GpuContextProbe {
                 .map(|p| ComputeProcess {
                     pid: p.pid,
                     used_gpu_memory_mib: match p.used_gpu_memory {
-                        nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) => Some(bytes / 1024 / 1024),
+                        nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) => {
+                            Some(bytes / 1024 / 1024)
+                        }
                         nvml_wrapper::enums::device::UsedGpuMemory::Unavailable => None,
                     },
                 })
@@ -266,16 +274,25 @@ mod tests {
             ReleaseVerification::Red(vec![4242])
         );
         // Grün, dann wieder rot — Serie zurückgesetzt.
-        assert_eq!(r.verify(&probe_with(&[]), Duration::ZERO).unwrap(), ReleaseVerification::Green);
+        assert_eq!(
+            r.verify(&probe_with(&[]), Duration::ZERO).unwrap(),
+            ReleaseVerification::Green
+        );
         assert!(!r.is_closed());
         assert_eq!(
             r.verify(&probe_with(&[4242]), Duration::ZERO).unwrap(),
             ReleaseVerification::Red(vec![4242])
         );
         // Erst jetzt zwei grüne Proben in Folge.
-        assert_eq!(r.verify(&probe_with(&[]), Duration::ZERO).unwrap(), ReleaseVerification::Green);
+        assert_eq!(
+            r.verify(&probe_with(&[]), Duration::ZERO).unwrap(),
+            ReleaseVerification::Green
+        );
         assert!(!r.is_closed());
-        assert_eq!(r.verify(&probe_with(&[]), Duration::ZERO).unwrap(), ReleaseVerification::Green);
+        assert_eq!(
+            r.verify(&probe_with(&[]), Duration::ZERO).unwrap(),
+            ReleaseVerification::Green
+        );
         assert!(r.is_closed());
     }
 
@@ -286,8 +303,14 @@ mod tests {
         // muss den fehlenden PID als Evidenzlücke behandeln, nicht als Erfolg.
         let mut r = GpuReceipt::from_smoke_probe(&probe_with(&[]));
         assert!(r.recorded_pids().is_empty());
-        assert_eq!(r.verify(&probe_with(&[]), Duration::ZERO).unwrap(), ReleaseVerification::Green);
-        assert_eq!(r.verify(&probe_with(&[]), Duration::ZERO).unwrap(), ReleaseVerification::Green);
+        assert_eq!(
+            r.verify(&probe_with(&[]), Duration::ZERO).unwrap(),
+            ReleaseVerification::Green
+        );
+        assert_eq!(
+            r.verify(&probe_with(&[]), Duration::ZERO).unwrap(),
+            ReleaseVerification::Green
+        );
         assert!(r.is_closed());
     }
 
@@ -313,7 +336,10 @@ mod tests {
     fn probe_zu_frueh_wird_verweigert() {
         let mut r = GpuReceipt::from_smoke_probe(&probe_with(&[4242]));
         // Erste Probe ist immer erlaubt.
-        assert_eq!(r.verify(&probe_with(&[]), Duration::from_secs(1)).unwrap(), ReleaseVerification::Green);
+        assert_eq!(
+            r.verify(&probe_with(&[]), Duration::from_secs(1)).unwrap(),
+            ReleaseVerification::Green
+        );
         // Direkt danach: zu früh → Fehler, Serie bleibt unangetastet.
         assert!(r.verify(&probe_with(&[]), Duration::from_secs(1)).is_err());
         assert!(!r.is_closed());

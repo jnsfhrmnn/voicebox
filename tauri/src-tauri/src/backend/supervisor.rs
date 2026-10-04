@@ -38,7 +38,9 @@ fn send_with_timeout(tx: &tokio::sync::mpsc::Sender<Command>, mut cmd: Command) 
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                eprintln!("[supervisor] FEHLER: Mailbox geschlossen — terminales Command verworfen");
+                eprintln!(
+                    "[supervisor] FEHLER: Mailbox geschlossen — terminales Command verworfen"
+                );
                 return false;
             }
         }
@@ -46,7 +48,6 @@ fn send_with_timeout(tx: &tokio::sync::mpsc::Sender<Command>, mut cmd: Command) 
     eprintln!("[supervisor] FEHLER: Mailbox 2 s voll — terminales Command verworfen");
     false
 }
-
 
 enum Command {
     /// CPU-Sidecar wird gespawnt (vorhandener Spawn-Pfad in main.rs).
@@ -64,7 +65,10 @@ enum Command {
     /// Drain + Teardown des Ausgangs-Backends bestätigt → Ziel-Vorbereitung.
     SwitchDrained { op_id: String },
     /// Ziel-Backend gestartet + Handshake grün → Ready mit neuer Generation.
-    SwitchTargetReady { op_id: String, instance: SidecarInstance },
+    SwitchTargetReady {
+        op_id: String,
+        instance: SidecarInstance,
+    },
     /// Switch fehlgeschlagen → fail-closed NoBackendReady (sichtbar).
     SwitchFailed { op_id: String, reason: String },
     /// App-Ende: Admission schließen; aktive CUDA-Generation invalidieren (B8).
@@ -149,7 +153,11 @@ impl Supervisor {
             } else {
                 "jf-whisper-server-cuda"
             };
-            let exe_path = manager.base_dir.join("cuda").join(&ptr.build_id).join(exe_name);
+            let exe_path = manager
+                .base_dir
+                .join("cuda")
+                .join(&ptr.build_id)
+                .join(exe_name);
             if exe_path.exists() {
                 state_inner.artifact = ArtifactPhase::Installed;
             }
@@ -204,7 +212,10 @@ impl Supervisor {
                                 generation: gen,
                                 backend_variant: variant,
                                 model_contract_hash: model_contract_hash(variant),
-                                sidecar_instance_id: format!("{}-{}", instance.pid, instance.creation_time_ms),
+                                sidecar_instance_id: format!(
+                                    "{}-{}",
+                                    instance.pid, instance.creation_time_ms
+                                ),
                             };
                             // JFW-12 Bugfix: Das Boot kann in CPU oder CUDA starten
                             // (main.rs wählt die Binary über den Current-Pointer). Die
@@ -275,12 +286,13 @@ impl Supervisor {
                                         op.target_generation = Some(st.next_generation());
                                         // Switch-Evidenz eröffnen (Spec C, AC-F): inhaltsfrei;
                                         // der Switch-Blocking-Task schreibt das Journal.
-                                        let evidence = crate::backend::switch_evidence::SwitchEvidence::new(
-                                            op.operation_id.clone(),
-                                            direction,
-                                            st.app_epoch.clone(),
-                                            from_gen,
-                                        );
+                                        let evidence =
+                                            crate::backend::switch_evidence::SwitchEvidence::new(
+                                                op.operation_id.clone(),
+                                                direction,
+                                                st.app_epoch.clone(),
+                                                from_gen,
+                                            );
                                         st.evidence = Some(evidence);
                                         st.operation = Some(op.clone());
                                         // Drain-Phase: Admission ist jetzt geschlossen (B2).
@@ -302,9 +314,16 @@ impl Supervisor {
                                         }
                                     });
                                     // op_id + reservierte Zielgeneration aus dem State lesen.
-                                    actor_state.lock().unwrap().operation.as_ref().map(|o| (o.operation_id.clone(), o.target_generation))
+                                    actor_state
+                                        .lock()
+                                        .unwrap()
+                                        .operation
+                                        .as_ref()
+                                        .map(|o| (o.operation_id.clone(), o.target_generation))
                                 };
-                                let Some((op_id, to_generation)) = op_id else { continue; };
+                                let Some((op_id, to_generation)) = op_id else {
+                                    continue;
+                                };
                                 let to_generation = to_generation.unwrap_or(0);
                                 // JFW-12 Block (h): Collector in den Switch-Blocking-Task
                                 // überführen — die Evidenz wird entlang der echten Schritte
@@ -339,7 +358,10 @@ impl Supervisor {
                                         run_switch_steps, SwitchContext, SwitchOutcome,
                                     };
                                     use crate::backend::switch_evidence::SwitchResult;
-                                    let ctx = SwitchContext { op_id: op_id.clone(), direction };
+                                    let ctx = SwitchContext {
+                                        op_id: op_id.clone(),
+                                        direction,
+                                    };
                                     // JFW-12 Block (h): kompletter Prozesszyklus
                                     // Drain → Teardown (Job-Object-Kill) → Zielstart →
                                     // Readiness-Smoke → VRAM-Evidence → Ready, fail-closed
@@ -351,13 +373,38 @@ impl Supervisor {
                                         to_generation,
                                         old_cuda_pid,
                                         std::time::Duration::from_secs(1),
-                                        || { send_with_timeout(&tx2, Command::SwitchDrained { op_id: op_id.clone() }); },
-                                        |instance| { send_with_timeout(&tx2, Command::SwitchTargetReady { op_id: op_id.clone(), instance }); },
-                                        |reason| { send_with_timeout(&tx2, Command::SwitchFailed { op_id: op_id.clone(), reason }); },
+                                        || {
+                                            send_with_timeout(
+                                                &tx2,
+                                                Command::SwitchDrained {
+                                                    op_id: op_id.clone(),
+                                                },
+                                            );
+                                        },
+                                        |instance| {
+                                            send_with_timeout(
+                                                &tx2,
+                                                Command::SwitchTargetReady {
+                                                    op_id: op_id.clone(),
+                                                    instance,
+                                                },
+                                            );
+                                        },
+                                        |reason| {
+                                            send_with_timeout(
+                                                &tx2,
+                                                Command::SwitchFailed {
+                                                    op_id: op_id.clone(),
+                                                    reason,
+                                                },
+                                            );
+                                        },
                                     );
                                     let result = match &outcome {
                                         SwitchOutcome::Completed => SwitchResult::Success,
-                                        SwitchOutcome::Failed(r) => SwitchResult::Failure(r.clone()),
+                                        SwitchOutcome::Failed(r) => {
+                                            SwitchResult::Failure(r.clone())
+                                        }
                                     };
                                     let probe_count = collector.vram_probes().len();
                                     let path = collector.finish(result);
@@ -384,7 +431,10 @@ impl Supervisor {
                                 _ => return, // Op-Wechsel/fremde Operation — hart abgelehnt.
                             };
                             if !runtime_transition(&st.runtime, &to) {
-                                eprintln!("supervisor: abgelehnte Transition {:?} -> {:?}", st.runtime, to);
+                                eprintln!(
+                                    "supervisor: abgelehnte Transition {:?} -> {:?}",
+                                    st.runtime, to
+                                );
                                 return;
                             }
                             st.runtime = to;
@@ -394,7 +444,9 @@ impl Supervisor {
                         apply(&app, &actor_state, |st| {
                             // Zielvariante aus der Vorbereitungsphase (B2).
                             let variant = match &st.runtime {
-                                RuntimePhase::PreparingCuda(o) if *o == op_id => BackendVariant::Cuda,
+                                RuntimePhase::PreparingCuda(o) if *o == op_id => {
+                                    BackendVariant::Cuda
+                                }
                                 RuntimePhase::PreparingCpu(o) if *o == op_id => BackendVariant::Cpu,
                                 _ => return,
                             };
@@ -411,14 +463,20 @@ impl Supervisor {
                                 generation: gen,
                                 backend_variant: variant,
                                 model_contract_hash: model_contract_hash(variant),
-                                sidecar_instance_id: format!("{}-{}", instance.pid, instance.creation_time_ms),
+                                sidecar_instance_id: format!(
+                                    "{}-{}",
+                                    instance.pid, instance.creation_time_ms
+                                ),
                             };
                             let to = match variant {
                                 BackendVariant::Cpu => RuntimePhase::CpuReady(gen),
                                 BackendVariant::Cuda => RuntimePhase::CudaReady(gen),
                             };
                             if !runtime_transition(&st.runtime, &to) {
-                                eprintln!("supervisor: abgelehnte Transition {:?} -> {:?}", st.runtime, to);
+                                eprintln!(
+                                    "supervisor: abgelehnte Transition {:?} -> {:?}",
+                                    st.runtime, to
+                                );
                                 return;
                             }
                             // Nur das aktive Backend hält eine Live-Instanz (C).
@@ -483,15 +541,21 @@ impl Supervisor {
                         // Konfliktmatrix (B2): genau eine Lifecycle-Operation.
                         let conflict = {
                             let st = actor_state.lock().unwrap();
-                            operation_conflict(&st.operation, kind)
-                                .err()
-                                .or_else(|| {
-                                    if !matches!(st.artifact, ArtifactPhase::NotInstalled | ArtifactPhase::RepairRequired | ArtifactPhase::Installed) {
-                                        Some(format!("Artefakt in Phase {} — Operation nicht möglich", st.artifact.as_str()))
-                                    } else {
-                                        None
-                                    }
-                                })
+                            operation_conflict(&st.operation, kind).err().or_else(|| {
+                                if !matches!(
+                                    st.artifact,
+                                    ArtifactPhase::NotInstalled
+                                        | ArtifactPhase::RepairRequired
+                                        | ArtifactPhase::Installed
+                                ) {
+                                    Some(format!(
+                                        "Artefakt in Phase {} — Operation nicht möglich",
+                                        st.artifact.as_str()
+                                    ))
+                                } else {
+                                    None
+                                }
+                            })
                         };
                         if let Some(err) = conflict {
                             eprintln!("supervisor: Addon-Operation abgelehnt: {err}");
@@ -514,7 +578,9 @@ impl Supervisor {
                             let progress = |phase: &str| {
                                 let p = match phase {
                                     "downloading" => ArtifactPhase::Downloading,
-                                    "verifying_manifest" | "verifying_signature" => ArtifactPhase::Verifying,
+                                    "verifying_manifest" | "verifying_signature" => {
+                                        ArtifactPhase::Verifying
+                                    }
                                     _ => return, // extracting/committing → Staged folgt unten
                                 };
                                 send_with_timeout(&tx2, Command::ArtifactPhaseUpdate { phase: p });
@@ -524,17 +590,31 @@ impl Supervisor {
                             } else {
                                 manager.repair(progress)
                             };
-                match result {
-                    Ok(build) => {
-                        send_with_timeout(&tx2, Command::ArtifactPhaseUpdate { phase: ArtifactPhase::Staged });
-                        eprintln!("supervisor: Addon-Operation {kind:?} fertig — Build {}", build.build_id);
-                        send_with_timeout(&tx2, Command::ArtifactOperationDone { kind });
-                    }
-                    Err(reason) => {
-                        send_with_timeout(&tx2, Command::ArtifactOperationFailed { kind, reason });
-                    }
-                }
-            });
+                            match result {
+                                Ok(build) => {
+                                    send_with_timeout(
+                                        &tx2,
+                                        Command::ArtifactPhaseUpdate {
+                                            phase: ArtifactPhase::Staged,
+                                        },
+                                    );
+                                    eprintln!(
+                                        "supervisor: Addon-Operation {kind:?} fertig — Build {}",
+                                        build.build_id
+                                    );
+                                    send_with_timeout(
+                                        &tx2,
+                                        Command::ArtifactOperationDone { kind },
+                                    );
+                                }
+                                Err(reason) => {
+                                    send_with_timeout(
+                                        &tx2,
+                                        Command::ArtifactOperationFailed { kind, reason },
+                                    );
+                                }
+                            }
+                        });
                     }
                     Command::RemoveAddon => {
                         let conflict = {
@@ -542,8 +622,16 @@ impl Supervisor {
                             operation_conflict(&st.operation, OperationKind::RemoveAddon)
                                 .err()
                                 .or_else(|| {
-                                    if !matches!(st.artifact, ArtifactPhase::NotInstalled | ArtifactPhase::RepairRequired | ArtifactPhase::Installed) {
-                                        Some(format!("Artefakt in Phase {} — Remove nicht möglich", st.artifact.as_str()))
+                                    if !matches!(
+                                        st.artifact,
+                                        ArtifactPhase::NotInstalled
+                                            | ArtifactPhase::RepairRequired
+                                            | ArtifactPhase::Installed
+                                    ) {
+                                        Some(format!(
+                                            "Artefakt in Phase {} — Remove nicht möglich",
+                                            st.artifact.as_str()
+                                        ))
                                     } else {
                                         None
                                     }
@@ -563,14 +651,23 @@ impl Supervisor {
                             mgr_build_id.clone(),
                         );
                         let tx2 = tx_for_ops.clone();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            match manager.remove() {
-                                Ok(()) => {
-                                    send_with_timeout(&tx2, Command::ArtifactOperationDone { kind: OperationKind::RemoveAddon });
-                                }
-                                Err(reason) => {
-                                    send_with_timeout(&tx2, Command::ArtifactOperationFailed { kind: OperationKind::RemoveAddon, reason });
-                                }
+                        tauri::async_runtime::spawn_blocking(move || match manager.remove() {
+                            Ok(()) => {
+                                send_with_timeout(
+                                    &tx2,
+                                    Command::ArtifactOperationDone {
+                                        kind: OperationKind::RemoveAddon,
+                                    },
+                                );
+                            }
+                            Err(reason) => {
+                                send_with_timeout(
+                                    &tx2,
+                                    Command::ArtifactOperationFailed {
+                                        kind: OperationKind::RemoveAddon,
+                                        reason,
+                                    },
+                                );
                             }
                         });
                     }
@@ -627,7 +724,9 @@ impl Supervisor {
                             } else {
                                 ArtifactPhase::NotInstalled
                             };
-                            eprintln!("supervisor: Addon-Operation {kind:?} fehlgeschlagen: {reason}");
+                            eprintln!(
+                                "supervisor: Addon-Operation {kind:?} fehlgeschlagen: {reason}"
+                            );
                             st.artifact_error = Some(reason.clone());
                             if artifact_transition(&st.artifact, &to) {
                                 st.artifact = to;
@@ -639,7 +738,12 @@ impl Supervisor {
             }
         });
 
-        Self { tx, state, manager, switch_steps }
+        Self {
+            tx,
+            state,
+            manager,
+            switch_steps,
+        }
     }
 
     /// Vor dem CPU-Spawn aufrufen (bestehender Pfad in main.rs).
@@ -680,7 +784,9 @@ impl Supervisor {
 
     /// Ziel-Backend gestartet + Handshake grün → Ready mit neuer Generation.
     pub fn switch_target_ready(&self, op_id: String, instance: SidecarInstance) {
-        let _ = self.tx.try_send(Command::SwitchTargetReady { op_id, instance });
+        let _ = self
+            .tx
+            .try_send(Command::SwitchTargetReady { op_id, instance });
     }
 
     /// Switch fehlgeschlagen → fail-closed NoBackendReady (sichtbar).
@@ -737,12 +843,14 @@ impl Supervisor {
                 backend_variant: None,
                 reason,
             },
-            admission::AdmissionDecision::StaleGeneration { requested, active } => AdmissionOutcome {
-                admitted: false,
-                generation: Some(active),
-                backend_variant: None,
-                reason: format!("stale_generation:{requested}!={active}"),
-            },
+            admission::AdmissionDecision::StaleGeneration { requested, active } => {
+                AdmissionOutcome {
+                    admitted: false,
+                    generation: Some(active),
+                    backend_variant: None,
+                    reason: format!("stale_generation:{requested}!={active}"),
+                }
+            }
         }
     }
 
@@ -790,8 +898,14 @@ mod tests {
 
     #[test]
     fn contract_hash_is_deterministic_and_variant_bound() {
-        assert_eq!(model_contract_hash(BackendVariant::Cpu), model_contract_hash(BackendVariant::Cpu));
-        assert_ne!(model_contract_hash(BackendVariant::Cpu), model_contract_hash(BackendVariant::Cuda));
+        assert_eq!(
+            model_contract_hash(BackendVariant::Cpu),
+            model_contract_hash(BackendVariant::Cpu)
+        );
+        assert_ne!(
+            model_contract_hash(BackendVariant::Cpu),
+            model_contract_hash(BackendVariant::Cuda)
+        );
     }
 
     #[test]

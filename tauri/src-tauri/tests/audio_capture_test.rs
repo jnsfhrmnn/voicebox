@@ -4,8 +4,8 @@
 //   2. Run: cargo test --test audio_capture_test -- --nocapture
 //   3. The test will capture audio for 5 seconds and verify the output
 
-use voicebox::audio_capture::{AudioCaptureState, start_capture, stop_capture};
 use base64::Engine;
+use voicebox::audio_capture::{start_capture, stop_capture, AudioCaptureState};
 
 #[tokio::test]
 async fn test_system_audio_capture() {

@@ -142,7 +142,13 @@ impl SidecarInstance {
             .unwrap_or(0)
     }
 
-    pub fn new(pid: u32, executable_path: String, variant: BackendVariant, port: u16, build_id: String) -> Self {
+    pub fn new(
+        pid: u32,
+        executable_path: String,
+        variant: BackendVariant,
+        port: u16,
+        build_id: String,
+    ) -> Self {
         Self {
             pid,
             creation_time_ms: Self::now_ms(),
@@ -301,7 +307,10 @@ pub fn runtime_transition(from: &RuntimePhase, to: &RuntimePhase) -> bool {
             matches!(to, PreparingCuda(_) | CpuReady(_) | NoBackendReady(_)) && same_op(op, to)
         }
         PreparingCuda(ref op) => {
-            matches!(to, CudaReady(_) | DrainingCpu(_) | CpuReady(_) | NoBackendReady(_)) && same_op(op, to)
+            matches!(
+                to,
+                CudaReady(_) | DrainingCpu(_) | CpuReady(_) | NoBackendReady(_)
+            ) && same_op(op, to)
         }
         CudaReady(_) => matches!(to, DrainingCuda(_)),
         DrainingCuda(ref op) => {
@@ -334,7 +343,10 @@ fn same_op(from_op: &str, to: &RuntimePhase) -> bool {
 /// Konfliktmatrix (B2): parallele Switch-/Install-/Repair-/Update-/Remove-
 /// Operationen sind verboten; ein identischer Request erhält dieselbe
 /// laufende `operation_id`.
-pub fn operation_conflict(current: &Option<Operation>, requested: OperationKind) -> Result<(), String> {
+pub fn operation_conflict(
+    current: &Option<Operation>,
+    requested: OperationKind,
+) -> Result<(), String> {
     match current {
         None => Ok(()),
         Some(op) if op.kind == requested => Err(format!(
@@ -351,8 +363,14 @@ mod tests {
 
     #[test]
     fn boot_to_ready_is_valid() {
-        assert!(runtime_transition(&RuntimePhase::BootingCpu, &RuntimePhase::CpuReady(1)));
-        assert!(!runtime_transition(&RuntimePhase::BootingCpu, &RuntimePhase::PreparingCuda("op".into())));
+        assert!(runtime_transition(
+            &RuntimePhase::BootingCpu,
+            &RuntimePhase::CpuReady(1)
+        ));
+        assert!(!runtime_transition(
+            &RuntimePhase::BootingCpu,
+            &RuntimePhase::PreparingCuda("op".into())
+        ));
     }
 
     #[test]
@@ -362,7 +380,10 @@ mod tests {
             &RuntimePhase::DrainingCpu(op.into()),
             &RuntimePhase::NoBackendReady("timeout".into())
         ));
-        assert!(runtime_transition(&RuntimePhase::PreparingCuda(op.into()), &RuntimePhase::CpuReady(3)));
+        assert!(runtime_transition(
+            &RuntimePhase::PreparingCuda(op.into()),
+            &RuntimePhase::CpuReady(3)
+        ));
         // Op-Wechsel innerhalb einer Phase ist verboten.
         assert!(!runtime_transition(
             &RuntimePhase::DrainingCpu("op-a".into()),
@@ -373,13 +394,34 @@ mod tests {
     #[test]
     fn full_cuda_roundtrip() {
         let op = "sw-1";
-        assert!(runtime_transition(&RuntimePhase::CpuReady(1), &RuntimePhase::DrainingCpu(op.into())));
-        assert!(runtime_transition(&RuntimePhase::DrainingCpu(op.into()), &RuntimePhase::PreparingCuda(op.into())));
-        assert!(runtime_transition(&RuntimePhase::PreparingCuda(op.into()), &RuntimePhase::CudaReady(2)));
-        assert!(runtime_transition(&RuntimePhase::CudaReady(2), &RuntimePhase::DrainingCuda(op.into())));
-        assert!(runtime_transition(&RuntimePhase::DrainingCuda(op.into()), &RuntimePhase::PreparingCpu(op.into())));
-        assert!(runtime_transition(&RuntimePhase::PreparingCpu(op.into()), &RuntimePhase::VerifyingRelease(op.into())));
-        assert!(runtime_transition(&RuntimePhase::VerifyingRelease(op.into()), &RuntimePhase::CpuReady(3)));
+        assert!(runtime_transition(
+            &RuntimePhase::CpuReady(1),
+            &RuntimePhase::DrainingCpu(op.into())
+        ));
+        assert!(runtime_transition(
+            &RuntimePhase::DrainingCpu(op.into()),
+            &RuntimePhase::PreparingCuda(op.into())
+        ));
+        assert!(runtime_transition(
+            &RuntimePhase::PreparingCuda(op.into()),
+            &RuntimePhase::CudaReady(2)
+        ));
+        assert!(runtime_transition(
+            &RuntimePhase::CudaReady(2),
+            &RuntimePhase::DrainingCuda(op.into())
+        ));
+        assert!(runtime_transition(
+            &RuntimePhase::DrainingCuda(op.into()),
+            &RuntimePhase::PreparingCpu(op.into())
+        ));
+        assert!(runtime_transition(
+            &RuntimePhase::PreparingCpu(op.into()),
+            &RuntimePhase::VerifyingRelease(op.into())
+        ));
+        assert!(runtime_transition(
+            &RuntimePhase::VerifyingRelease(op.into()),
+            &RuntimePhase::CpuReady(3)
+        ));
     }
 
     #[test]

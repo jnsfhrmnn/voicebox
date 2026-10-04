@@ -33,13 +33,18 @@ pub struct JobPermit {
 /// `requested_generation` ist die Generation, auf die der Client referenziert
 /// (z. B. aus dem letzten Snapshot). Fehlt sie (`None`), wird die aktuelle
 /// Generation verwendet — das ist der normale Pfad nach einem Ready-Signal.
-pub fn admit(state: &BackendSupervisorState, requested_generation: Option<u64>) -> AdmissionDecision {
+pub fn admit(
+    state: &BackendSupervisorState,
+    requested_generation: Option<u64>,
+) -> AdmissionDecision {
     let active = match state.runtime.active_variant() {
         Some(v) => v,
-        None => return AdmissionDecision::Closed(format!(
-            "Admission geschlossen: {:?} (kein Ready-Zustand)",
-            state.runtime
-        )),
+        None => {
+            return AdmissionDecision::Closed(format!(
+                "Admission geschlossen: {:?} (kein Ready-Zustand)",
+                state.runtime
+            ))
+        }
     };
 
     if let Some(op) = &state.operation {
@@ -73,11 +78,7 @@ pub fn admit(state: &BackendSupervisorState, requested_generation: Option<u64>) 
 
 /// Generationenfence für eingehende Responses (B7): eine Response ist nur dann
 /// gültig, wenn sie zur aktiven Epoche UND Generation gehört.
-pub fn response_fence(
-    state: &BackendSupervisorState,
-    epoch: &str,
-    generation: u64,
-) -> bool {
+pub fn response_fence(state: &BackendSupervisorState, epoch: &str, generation: u64) -> bool {
     if epoch != state.app_epoch {
         return false; // Alte App-Sitzung — niemals gültig (B3).
     }
@@ -121,7 +122,9 @@ mod tests {
     #[test]
     fn closed_while_operation_runs() {
         let mut st = ready_state(3);
-        st.operation = Some(crate::backend::state::Operation::new(OperationKind::SwitchToCuda));
+        st.operation = Some(crate::backend::state::Operation::new(
+            OperationKind::SwitchToCuda,
+        ));
         assert!(matches!(admit(&st, None), AdmissionDecision::Closed(_)));
     }
 

@@ -84,7 +84,12 @@ fn is_valid_path(path: &str) -> bool {
     if lowered.contains("%2e") || lowered.contains("%2f") || lowered.contains("%5c") {
         return false;
     }
-    !path.split('?').next().unwrap_or(path).split('/').any(|seg| seg == "." || seg == "..")
+    !path
+        .split('?')
+        .next()
+        .unwrap_or(path)
+        .split('/')
+        .any(|seg| seg == "." || seg == "..")
 }
 
 struct Session {
@@ -94,7 +99,11 @@ struct Session {
 }
 
 fn session(state: &ServerState) -> Result<Session, String> {
-    let port = state.sidecar_port.lock().unwrap().ok_or_else(|| "Sidecar ist nicht gestartet".to_string())?;
+    let port = state
+        .sidecar_port
+        .lock()
+        .unwrap()
+        .ok_or_else(|| "Sidecar ist nicht gestartet".to_string())?;
     let token = state.api_token.lock().unwrap().clone().ok_or_else(|| {
         "Kein API-Token im State — Sidecar wurde ohne JFW-1-Handshake gestartet".to_string()
     })?;
@@ -117,7 +126,9 @@ fn check_caller(window: &WebviewWindow, path: &str) -> Result<(), String> {
         format!("Fenster '{caller}' hat keine Sidecar-Allowlist (Custom-Command ohne fachliche Erlaubnis)")
     })?;
     if !is_allowed(path, allowlist) {
-        return Err(format!("Pfad '{path}' ist fuer Fenster '{caller}' nicht erlaubt"));
+        return Err(format!(
+            "Pfad '{path}' ist fuer Fenster '{caller}' nicht erlaubt"
+        ));
     }
     Ok(())
 }
@@ -197,7 +208,8 @@ pub async fn sidecar_upload(
         "file",
         reqwest::multipart::Part::bytes(bytes)
             .file_name(filename)
-            .mime_str(&content_type).map_err(|e| format!("Ungueltiger Content-Type: {e}"))?,
+            .mime_str(&content_type)
+            .map_err(|e| format!("Ungueltiger Content-Type: {e}"))?,
     );
     if let Some(fields_value) = &fields {
         if let Some(obj) = fields_value.as_object() {

@@ -11,10 +11,10 @@
 //! * `switch_plan`      — Reine Switch-Entscheidung/Planung (Block g, B5/B6)
 
 pub mod admission;
-#[cfg(windows)]
-pub mod process_windows;
 pub mod artifact;
 pub mod gpu_evidence;
+#[cfg(windows)]
+pub mod process_windows;
 pub mod state;
 pub mod supervisor;
 pub mod switch_driver;

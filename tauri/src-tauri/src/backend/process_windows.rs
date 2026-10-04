@@ -19,16 +19,17 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use windows::core::{HSTRING, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Storage::FileSystem::ReadFile;
 use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectExtendedLimitInformation, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, SetInformationJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CreateProcessW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW,
-    STARTF_USESTDHANDLES, ResumeThread,
+    CreateProcessW, ResumeThread, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+    PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOW,
 };
-use windows::Win32::Storage::FileSystem::ReadFile;
 
 /// Vollständige Prozessidentität des Sidecar (B8: "vollständige
 /// Prozessidentität" — PID + Exe-Pfad + Executable-Hash).
@@ -124,7 +125,10 @@ fn make_pipe() -> Result<(HANDLE, HANDLE), String> {
 fn build_env_block(extra: &[(String, String)]) -> Vec<u16> {
     let mut entries: Vec<(String, String)> = std::env::vars().collect();
     for (k, v) in extra {
-        match entries.iter_mut().find(|(ek, _)| ek.eq_ignore_ascii_case(k)) {
+        match entries
+            .iter_mut()
+            .find(|(ek, _)| ek.eq_ignore_ascii_case(k))
+        {
             Some(e) => e.1 = v.clone(),
             None => entries.push((k.clone(), v.clone())),
         }
@@ -151,7 +155,8 @@ pub fn spawn_sidecar(
 ) -> Result<(SidecarJob, mpsc::Receiver<SidecarLine>), String> {
     // 1) Job Object mit KILL_ON_JOB_CLOSE anlegen.
     let job_name = HSTRING::from("JFWhisperSidecarJob");
-    let job_handle = unsafe { CreateJobObjectW(None, &job_name).map_err(|e| format!("CreateJobObjectW: {e}"))? };
+    let job_handle =
+        unsafe { CreateJobObjectW(None, &job_name).map_err(|e| format!("CreateJobObjectW: {e}"))? };
 
     let mut extended = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     extended.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -263,7 +268,13 @@ pub fn spawn_sidecar(
     std::thread::spawn(move || read_pipe_lines(out_raw, tx, true));
     std::thread::spawn(move || read_pipe_lines(err_raw, tx_err, false));
 
-    Ok((SidecarJob { job_handle_raw: job_handle.0 as isize, identity }, rx))
+    Ok((
+        SidecarJob {
+            job_handle_raw: job_handle.0 as isize,
+            identity,
+        },
+        rx,
+    ))
 }
 
 /// Liest eine Pipe blockierend zeilenweise und sendet sie über den Kanal.

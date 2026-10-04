@@ -17,7 +17,10 @@ mod sidecar;
 mod synthetic_keys;
 
 use std::sync::Mutex;
-use tauri::{command, State, Manager, WindowEvent, Emitter, Listener, RunEvent, WebviewUrl, WebviewWindowBuilder, PhysicalPosition};
+use tauri::{
+    command, Emitter, Listener, Manager, PhysicalPosition, RunEvent, State, WebviewUrl,
+    WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::mpsc;
 
@@ -111,8 +114,7 @@ pub fn show_dictate_window(app: &tauri::AppHandle) {
         let monitor_pos = monitor.position();
         let monitor_size = monitor.size();
         if let Ok(win_size) = window.outer_size() {
-            let x = monitor_pos.x
-                + (monitor_size.width as i32 - win_size.width as i32) / 2;
+            let x = monitor_pos.x + (monitor_size.width as i32 - win_size.width as i32) / 2;
             let y = monitor_pos.y + (monitor_size.height as f64 * 0.04) as i32;
             let _ = window.set_position(PhysicalPosition::new(x, y));
         }
@@ -217,7 +219,9 @@ fn is_process_alive(pid: u32) -> bool {
             .output()
             .ok();
         match output {
-            Some(o) => o.status.success() && String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()),
+            Some(o) => {
+                o.status.success() && String::from_utf8_lossy(&o.stdout).contains(&pid.to_string())
+            }
             None => false,
         }
     }
@@ -345,7 +349,7 @@ async fn start_server(
     {
         // JFW-1: Port-Wiederverwendung entfernt — dynamischer Port + Handshake.
     }
-    
+
     #[cfg(windows)]
     {
         // JFW-1: Port-Wiederverwendung entfernt — dynamischer Port + Handshake.
@@ -356,14 +360,16 @@ async fn start_server(
     let data_dir = {
         let local = std::env::var("LOCALAPPDATA")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| app.path().app_data_dir()
-                .expect("no LOCALAPPDATA and no app_data_dir"));
+            .unwrap_or_else(|_| {
+                app.path()
+                    .app_data_dir()
+                    .expect("no LOCALAPPDATA and no app_data_dir")
+            });
         local.join("JFWhisper")
     };
 
     // Ensure data directory exists
-    std::fs::create_dir_all(&data_dir)
-        .map_err(|e| format!("Failed to create data dir: {}", e))?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
 
     // JFW-1 (Spec): Single-Instance-Lock pro Datenroot — fail-closed bei
     // zweiter Instanz, Stale-PID wird uebernommen.
@@ -388,10 +394,13 @@ async fn start_server(
             "jf-whisper-server-cuda"
         };
         // 1) Versionierter Build über den Current-Pointer (B9).
-        let versioned_exe: Option<std::path::PathBuf> = std::fs::read_to_string(cuda_dir.join("current.json"))
-            .ok()
-            .and_then(|raw| serde_json::from_str::<backend::artifact::CurrentPointer>(&raw).ok())
-            .map(|current| cuda_dir.join(&current.build_id).join(cuda_name));
+        let versioned_exe: Option<std::path::PathBuf> =
+            std::fs::read_to_string(cuda_dir.join("current.json"))
+                .ok()
+                .and_then(|raw| {
+                    serde_json::from_str::<backend::artifact::CurrentPointer>(&raw).ok()
+                })
+                .map(|current| cuda_dir.join(&current.build_id).join(cuda_name));
         let exe_path = match versioned_exe {
             Some(p) if p.exists() => p,
             _ => cuda_dir.join(cuda_name), // 2) Legacy-Flachlayout.
@@ -423,7 +432,10 @@ async fn start_server(
                     }
                 }
                 Err(e) => {
-                    println!("Failed to check CUDA binary version: {}. Falling back to CPU.", e);
+                    println!(
+                        "Failed to check CUDA binary version: {}. Falling back to CPU.",
+                        e
+                    );
                     false
                 }
             };
@@ -457,8 +469,12 @@ async fn start_server(
     let api_token = {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        const ALPHABET: [char; 16] = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p'];
-        let token: String = (0..32).map(|_| ALPHABET[rng.gen_range(0usize..16)]).collect();
+        const ALPHABET: [char; 16] = [
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
+        ];
+        let token: String = (0..32)
+            .map(|_| ALPHABET[rng.gen_range(0usize..16)])
+            .collect();
         *state.api_token.lock().unwrap() = Some(token.clone());
         token
     };
@@ -596,14 +612,24 @@ async fn start_server(
     let (mut rx, child) = {
         // Nicht-Windows-Fallback: Tauri-Shell-Spawn (Produktziel ist Windows;
         // B8-Job-Objects gelten fuer den produktiven Pfad).
-        let mut sidecar = app.shell().sidecar("jf-whisper-server").map_err(|e| {
-            format!("Failed to get sidecar: {}", e)
-        })?;
-        sidecar = sidecar.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
+        let mut sidecar = app
+            .shell()
+            .sidecar("jf-whisper-server")
+            .map_err(|e| format!("Failed to get sidecar: {}", e))?;
+        sidecar = sidecar.args([
+            "--data-dir",
+            &data_dir_str,
+            "--port",
+            &port_str,
+            "--parent-pid",
+            &parent_pid_str,
+        ]);
         if let Some(ref dir) = effective_models_dir {
             sidecar = sidecar.env("VOICEBOX_MODELS_DIR", dir);
         }
-        sidecar = sidecar.env("JFWHISPER_API_TOKEN", &api_token).env("JFWHISPER_GENERATION", generation.to_string());
+        sidecar = sidecar
+            .env("JFWHISPER_API_TOKEN", &api_token)
+            .env("JFWHISPER_GENERATION", generation.to_string());
         let spawn_result = sidecar.spawn();
         match spawn_result {
             Ok(result) => result,
@@ -680,7 +706,8 @@ async fn start_server(
                         // Variante/Generation sind fuer den Caller bindend.
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line_str.trim()) {
                             if v.get("jfwhisper_ready").and_then(|b| b.as_bool()) == Some(true) {
-                                let port = v.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                                let port =
+                                    v.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
                                 *state.sidecar_port.lock().unwrap() = Some(port);
                                 // JFW-12 Bugfix: Die Variante kommt aus dem Handshake
                                 // (server.py meldet "variant": cpu|cuda). Ein Boot direkt in
@@ -718,12 +745,17 @@ async fn start_server(
                         if output_tail.len() > 40 {
                             output_tail.remove(0);
                         }
-                        let _ = app.emit("server-log", serde_json::json!({
-                            "stream": "stdout",
-                            "line": line_str.trim_end(),
-                        }));
+                        let _ = app.emit(
+                            "server-log",
+                            serde_json::json!({
+                                "stream": "stdout",
+                                "line": line_str.trim_end(),
+                            }),
+                        );
 
-                        if line_str.contains("Uvicorn running") || line_str.contains("Application startup complete") {
+                        if line_str.contains("Uvicorn running")
+                            || line_str.contains("Application startup complete")
+                        {
                             println!("Server is ready!");
                             break;
                         }
@@ -735,19 +767,27 @@ async fn start_server(
                         if output_tail.len() > 40 {
                             output_tail.remove(0);
                         }
-                        let _ = app.emit("server-log", serde_json::json!({
-                            "stream": "stderr",
-                            "line": line_str.trim_end(),
-                        }));
+                        let _ = app.emit(
+                            "server-log",
+                            serde_json::json!({
+                                "stream": "stderr",
+                                "line": line_str.trim_end(),
+                            }),
+                        );
 
                         // Collect error lines for debugging
-                        if line_str.contains("ERROR") || line_str.contains("Error") || line_str.contains("Failed") {
+                        if line_str.contains("ERROR")
+                            || line_str.contains("Error")
+                            || line_str.contains("Failed")
+                        {
                             error_output.push(line_str.clone());
                         }
 
                         // Uvicorn logs to stderr, so check there too.
                         // JFW-1: Fallback ohne Handshake — Port aus State (0 = unbekannt).
-                        if line_str.contains("Uvicorn running") || line_str.contains("Application startup complete") {
+                        if line_str.contains("Uvicorn running")
+                            || line_str.contains("Application startup complete")
+                        {
                             println!("Server is ready! (stderr-Fallback)");
                             break;
                         }
@@ -772,7 +812,9 @@ async fn start_server(
                     eprintln!("  bun run dev:server");
                     eprintln!("=================================================================");
                     eprintln!("");
-                    return Err("Dev mode: Start server manually with 'bun run dev:server'".to_string());
+                    return Err(
+                        "Dev mode: Start server manually with 'bun run dev:server'".to_string()
+                    );
                 }
 
                 #[cfg(not(debug_assertions))]
@@ -809,10 +851,13 @@ async fn start_server(
                 tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
                     let line_str = String::from_utf8_lossy(&line);
                     println!("Server: {}", line_str);
-                    let _ = app_handle.emit("server-log", serde_json::json!({
-                        "stream": "stdout",
-                        "line": line_str.trim_end(),
-                    }));
+                    let _ = app_handle.emit(
+                        "server-log",
+                        serde_json::json!({
+                            "stream": "stdout",
+                            "line": line_str.trim_end(),
+                        }),
+                    );
                 }
                 tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
                     let line_str = String::from_utf8_lossy(&line);
@@ -822,11 +867,18 @@ async fn start_server(
                     let is_error = line_str.contains(" - ERROR - ")
                         || line_str.contains(" - CRITICAL - ")
                         || line_str.contains("Traceback");
-                    eprintln!("{}: {}", if is_error { "Server error" } else { "Server" }, line_str);
-                    let _ = app_handle.emit("server-log", serde_json::json!({
-                        "stream": "stderr",
-                        "line": line_str.trim_end(),
-                    }));
+                    eprintln!(
+                        "{}: {}",
+                        if is_error { "Server error" } else { "Server" },
+                        line_str
+                    );
+                    let _ = app_handle.emit(
+                        "server-log",
+                        serde_json::json!({
+                            "stream": "stderr",
+                            "line": line_str.trim_end(),
+                        }),
+                    );
                 }
                 _ => {}
             }
@@ -873,9 +925,7 @@ async fn stop_server(
             let _ = Command::new("kill")
                 .args(["-9", "--", &format!("-{}", pid)])
                 .output();
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
 
             println!("stop_server: Process group kill completed");
         }
@@ -931,8 +981,16 @@ fn jfwhisper_data_root() -> std::path::PathBuf {
 
 /// Aktive Tasks zählen (`/tasks/active`): Downloads + Generationen.
 fn parse_active_task_count(v: &serde_json::Value) -> Result<usize, String> {
-    let dl = v.get("downloads").and_then(|d| d.as_array()).map(|a| a.len()).unwrap_or(0);
-    let gen = v.get("generations").and_then(|g| g.as_array()).map(|a| a.len()).unwrap_or(0);
+    let dl = v
+        .get("downloads")
+        .and_then(|d| d.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let gen = v
+        .get("generations")
+        .and_then(|g| g.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
     Ok(dl + gen)
 }
 
@@ -950,12 +1008,12 @@ fn silence_wav_bytes() -> Vec<u8> {
     buf.extend_from_slice(b"WAVE");
     buf.extend_from_slice(b"fmt ");
     buf.extend_from_slice(&16u32.to_le_bytes()); // fmt-Chunkgröße
-    buf.extend_from_slice(&1u16.to_le_bytes());  // PCM
+    buf.extend_from_slice(&1u16.to_le_bytes()); // PCM
     buf.extend_from_slice(&1u16.to_le_bytes()); // mono
     buf.extend_from_slice(&RATE.to_le_bytes());
     buf.extend_from_slice(&(RATE * 2).to_le_bytes()); // Byte-Rate
-    buf.extend_from_slice(&2u16.to_le_bytes());      // Block-Align
-    buf.extend_from_slice(&16u16.to_le_bytes());    // Bits pro Sample
+    buf.extend_from_slice(&2u16.to_le_bytes()); // Block-Align
+    buf.extend_from_slice(&16u16.to_le_bytes()); // Bits pro Sample
     buf.extend_from_slice(b"data");
     buf.extend_from_slice(&(data_len as u32).to_le_bytes());
     buf.resize(44 + data_len, 0); // Stille (Null-PCM)
@@ -1009,7 +1067,10 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
     /// schließen. JFW-12 Block (h): das Prozessende wird nach dem Job-Close
     /// (KILL_ON_JOB_CLOSE, B8) wirklich bestätigt — nur ein bestätigtes Ende
     /// meldet `Ok` und setzt die Journal-Flags (kein erfundener Nachweis).
-    fn teardown_source(&self, _direction: backend::switch_evidence::SwitchDirection) -> Result<(), String> {
+    fn teardown_source(
+        &self,
+        _direction: backend::switch_evidence::SwitchDirection,
+    ) -> Result<(), String> {
         let state = self.app.state::<ServerState>();
         let pid = state.server_pid.lock().unwrap().take();
 
@@ -1028,7 +1089,9 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                     .timeout(std::time::Duration::from_secs(2))
                     .build()
                     .map_err(|e| format!("Teardown-Client: {e}"))?;
-                let _ = client.post(format!("http://127.0.0.1:{port}/shutdown")).send();
+                let _ = client
+                    .post(format!("http://127.0.0.1:{port}/shutdown"))
+                    .send();
             }
 
             // Kurzes Graceful-Shutdown-Fenster (Spec JFW-12 Zeile 404: „kurzes
@@ -1047,9 +1110,13 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             #[cfg(not(windows))]
             {
                 use std::process::Command;
-                let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).output();
+                let _ = Command::new("kill")
+                    .args(["-TERM", "--", &format!("-{pid}")])
+                    .output();
                 std::thread::sleep(std::time::Duration::from_millis(100));
-                let _ = Command::new("kill").args(["-9", "--", &format!("-{pid}")]).output();
+                let _ = Command::new("kill")
+                    .args(["-9", "--", &format!("-{pid}")])
+                    .output();
             }
 
             // JFW-12 Block (h): Job-Close (Drop) = KILL_ON_JOB_CLOSE beendet den
@@ -1071,7 +1138,10 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
     }
 
     /// Schritt 3 (B5.4/B6.2): Ziel-Backend starten + Ready-Handshake abwarten.
-    fn start_target(&self, direction: backend::switch_evidence::SwitchDirection) -> Result<SidecarInstance, String> {
+    fn start_target(
+        &self,
+        direction: backend::switch_evidence::SwitchDirection,
+    ) -> Result<SidecarInstance, String> {
         let variant = match direction {
             backend::switch_evidence::SwitchDirection::CpuToCuda => BackendVariant::Cuda,
             backend::switch_evidence::SwitchDirection::CudaToCpu => BackendVariant::Cpu,
@@ -1095,9 +1165,12 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                 {
                     let cuda_root = data_dir.join("backends").join("cuda");
                     let current_raw = std::fs::read_to_string(cuda_root.join("current.json"))
-                        .map_err(|e| format!("CUDA-Artefakt nicht installiert (current.json: {e})"))?;
+                        .map_err(|e| {
+                            format!("CUDA-Artefakt nicht installiert (current.json: {e})")
+                        })?;
                     let current: backend::artifact::CurrentPointer =
-                        serde_json::from_str(&current_raw).map_err(|e| format!("current.json ungültig: {e}"))?;
+                        serde_json::from_str(&current_raw)
+                            .map_err(|e| format!("current.json ungültig: {e}"))?;
                     let dir = cuda_root.join(&current.build_id);
                     (dir.join("jf-whisper-server-cuda.exe"), Some(dir))
                 }
@@ -1141,7 +1214,9 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
                 .arg("--version")
                 .current_dir(exe_path.parent().unwrap_or(std::path::Path::new(".")))
                 .output()
-                .map_err(|e| format!("CUDA-Artefakt-Version nicht prüfbar: {e}. Switch abgelehnt."))?;
+                .map_err(|e| {
+                    format!("CUDA-Artefakt-Version nicht prüfbar: {e}. Switch abgelehnt.")
+                })?;
             let v = String::from_utf8_lossy(&out.stdout);
             let binary_version = v.trim().split_whitespace().last().unwrap_or("");
             if binary_version != app_version {
@@ -1156,8 +1231,12 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         use rand::Rng;
         let api_token: String = {
             let mut rng = rand::thread_rng();
-            const ALPHABET: [char; 16] = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p'];
-            (0..32).map(|_| ALPHABET[rng.gen_range(0usize..16)]).collect()
+            const ALPHABET: [char; 16] = [
+                'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
+            ];
+            (0..32)
+                .map(|_| ALPHABET[rng.gen_range(0usize..16)])
+                .collect()
         };
         *state.api_token.lock().unwrap() = Some(api_token.clone());
         let generation = {
@@ -1215,13 +1294,18 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         {
             use backend::process_windows::{spawn_sidecar, SidecarLine};
             let args: Vec<String> = vec![
-                "--data-dir".into(), data_dir_str.clone(),
-                "--port".into(), port_str.clone(),
-                "--parent-pid".into(), parent_pid_str.clone(),
+                "--data-dir".into(),
+                data_dir_str.clone(),
+                "--port".into(),
+                port_str.clone(),
+                "--parent-pid".into(),
+                parent_pid_str.clone(),
             ];
-            let (proc, mut line_rx): (backend::process_windows::SidecarJob, tokio::sync::mpsc::Receiver<backend::process_windows::SidecarLine>) =
-                spawn_sidecar(&exe_path, &args, &extra_env, cwd.as_deref())
-                    .map_err(|e| format!("Ziel-Spawn fehlgeschlagen: {e}"))?;
+            let (proc, mut line_rx): (
+                backend::process_windows::SidecarJob,
+                tokio::sync::mpsc::Receiver<backend::process_windows::SidecarLine>,
+            ) = spawn_sidecar(&exe_path, &args, &extra_env, cwd.as_deref())
+                .map_err(|e| format!("Ziel-Spawn fehlgeschlagen: {e}"))?;
             let pid = proc.identity.pid;
 
             // Bridge: SidecarLine → std-Channel (blocking recv mit Timeout).
@@ -1250,9 +1334,19 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         {
             use tauri_plugin_shell::process::CommandEvent;
             let (mut rx, child) = {
-                let mut sidecar = self.app.shell().sidecar("jf-whisper-server")
+                let mut sidecar = self
+                    .app
+                    .shell()
+                    .sidecar("jf-whisper-server")
                     .map_err(|e| format!("Failed to get sidecar: {e}"))?;
-                sidecar = sidecar.args(["--data-dir", &data_dir_str, "--port", &port_str, "--parent-pid", &parent_pid_str]);
+                sidecar = sidecar.args([
+                    "--data-dir",
+                    &data_dir_str,
+                    "--port",
+                    &port_str,
+                    "--parent-pid",
+                    &parent_pid_str,
+                ]);
                 for (k, v) in &extra_env {
                     sidecar = sidecar.env(k.as_str(), v.as_str());
                 }
@@ -1323,11 +1417,10 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
         // 2) Inferenz-Smoke (B5.5): Silence-WAV durch den echten Transkriptionspfad.
         //    Lädt das Modell bei Bedarf und beweist Gerät + Inferenz ohne Nutzeraufnahme.
         let wav = silence_wav_bytes();
-        let form = reqwest::blocking::multipart::Form::new()
-            .part(
-                "file",
-                reqwest::blocking::multipart::Part::bytes(wav).file_name("smoke.wav"),
-            );
+        let form = reqwest::blocking::multipart::Form::new().part(
+            "file",
+            reqwest::blocking::multipart::Part::bytes(wav).file_name("smoke.wav"),
+        );
         // Modell-Laden kann dauern (Cache-Read + Device-Move) — großzügiges Budget.
         let smoke_client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -1351,13 +1444,19 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             .send()
             .map_err(|e| format!("Health-Abfrage (nach Smoke) fehlgeschlagen: {e}"))?;
         let v2: serde_json::Value = health2.json().map_err(|e| format!("Health-Payload: {e}"))?;
-        if !v2.get("model_loaded").and_then(|b| b.as_bool()).unwrap_or(false) {
+        if !v2
+            .get("model_loaded")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false)
+        {
             return Err("Modell nach Smoke nicht geladen".into());
         }
         let expected = instance.variant.as_str();
         match v2.get("backend_variant").and_then(|s| s.as_str()) {
             Some(bv) if bv == expected => Ok(()),
-            other => Err(format!("Variant-Vertrag verletzt: erwartet {expected}, gemeldet {other:?}")),
+            other => Err(format!(
+                "Variant-Vertrag verletzt: erwartet {expected}, gemeldet {other:?}"
+            )),
         }
     }
 
@@ -1367,7 +1466,8 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
     /// die Probequelle bleibt injizierbar (Tests ohne CUDA-Hardware).
     fn vram_probe(
         &self,
-    ) -> Result<backend::gpu_evidence::GpuContextProbe, backend::gpu_evidence::GpuEvidenceError> {
+    ) -> Result<backend::gpu_evidence::GpuContextProbe, backend::gpu_evidence::GpuEvidenceError>
+    {
         backend::gpu_evidence::GpuContextProbe::capture()
     }
 
@@ -1375,7 +1475,10 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
     fn teardown_target(&self, instance: &SidecarInstance) {
         let state = self.app.state::<ServerState>();
         if *state.server_pid.lock().unwrap() != Some(instance.pid) {
-            eprintln!("teardown_target: PID {} ist nicht das aktuelle Sidecar — übersprungen", instance.pid);
+            eprintln!(
+                "teardown_target: PID {} ist nicht das aktuelle Sidecar — übersprungen",
+                instance.pid
+            );
             return;
         }
         // Graceful per HTTP, dann Job-Close (Drop = KILL_ON_JOB_CLOSE).
@@ -1389,7 +1492,9 @@ impl backend::switch_driver::SwitchStepFactory for MainSwitchSteps {
             .timeout(std::time::Duration::from_secs(2))
             .build()
         {
-            let _ = client.post(format!("http://127.0.0.1:{}/shutdown", instance.port)).send();
+            let _ = client
+                .post(format!("http://127.0.0.1:{}/shutdown", instance.port))
+                .send();
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while is_process_alive(instance.pid) && std::time::Instant::now() < deadline {
@@ -1476,10 +1581,7 @@ fn supervisor_admit(
 /// `target` ist "cpu" oder "cuda"; CUDA ist fail-closed, bis Block (d) das
 /// signierte Artefakt installiert hat.
 #[command]
-fn request_backend_switch(
-    state: State<'_, Supervisor>,
-    target: String,
-) -> Result<(), String> {
+fn request_backend_switch(state: State<'_, Supervisor>, target: String) -> Result<(), String> {
     let variant = match target.as_str() {
         "cpu" => BackendVariant::Cpu,
         "cuda" => BackendVariant::Cuda,
@@ -1580,9 +1682,7 @@ async fn play_audio_to_devices(
 }
 
 #[command]
-fn stop_audio_playback(
-    state: State<'_, audio_output::AudioOutputState>,
-) -> Result<(), String> {
+fn stop_audio_playback(state: State<'_, audio_output::AudioOutputState>) -> Result<(), String> {
     state.stop_all_playback()
 }
 
@@ -2117,7 +2217,7 @@ pub fn run() {
             {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{SetClassLongPtrW, GCLP_HICON, GCLP_HICONSM};
-                
+
                 if let Some((_, window)) = app.webview_windows().iter().next() {
                     if let Ok(hwnd) = window.hwnd() {
                         let hwnd = HWND(hwnd.0);
