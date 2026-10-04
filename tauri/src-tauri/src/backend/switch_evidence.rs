@@ -15,7 +15,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::backend::gpu_evidence::{GpuContextProbe, GpuEvidenceError, GpuReceipt, ReleaseVerification};
+use crate::backend::gpu_evidence::{
+    GpuContextProbe, GpuEvidenceError, GpuReceipt, ReleaseVerification,
+};
 
 /// Richtung eines Backendwechsels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +47,10 @@ impl<'de> serde::Deserialize<'de> for SwitchDirection {
         match v.as_str() {
             "cpu_to_cuda" => Ok(SwitchDirection::CpuToCuda),
             "cuda_to_cpu" => Ok(SwitchDirection::CudaToCpu),
-            other => Err(serde::de::Error::unknown_variant(other, &["cpu_to_cuda", "cuda_to_cpu"])),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["cpu_to_cuda", "cuda_to_cpu"],
+            )),
         }
     }
 }
@@ -96,9 +101,17 @@ impl<'de> serde::Deserialize<'de> for PhaseName {
             "target_start" => Ok(PhaseName::TargetStart),
             "model_ready" => Ok(PhaseName::ModelReady),
             "vram_check" => Ok(PhaseName::VramCheck),
-            other => Err(serde::de::Error::unknown_variant(other, &[
-                "admitted", "drain", "backend_end", "target_start", "model_ready", "vram_check",
-            ])),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &[
+                    "admitted",
+                    "drain",
+                    "backend_end",
+                    "target_start",
+                    "model_ready",
+                    "vram_check",
+                ],
+            )),
         }
     }
 }
@@ -154,7 +167,9 @@ impl<'de> serde::Deserialize<'de> for SwitchResult {
         } else if let Some(reason) = v.strip_prefix("failure: ") {
             Ok(SwitchResult::Failure(reason.to_string()))
         } else {
-            Err(serde::de::Error::custom(format!("unbekanntes Switch-Ergebnis: {v}")))
+            Err(serde::de::Error::custom(format!(
+                "unbekanntes Switch-Ergebnis: {v}"
+            )))
         }
     }
 }
@@ -265,7 +280,10 @@ pub fn journal_dir() -> PathBuf {
     let local = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    local.join("JFWhisper").join("runtime").join("backend-operations")
+    local
+        .join("JFWhisper")
+        .join("runtime")
+        .join("backend-operations")
 }
 
 /// Laufender Switch-Evidenz-Sammler (Spec C, AC-F).
@@ -407,8 +425,7 @@ pub fn journal_path(operation_id: &str) -> PathBuf {
 /// Atomares Schreiben des Journals nach `dir` (temp + rename). Inhaltsfrei,
 /// crashrecoverbar — Tests laufen gegen ein Temp-Verzeichnis.
 pub fn write_journal_in(dir: &std::path::Path, journal: &SwitchJournal) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("Journaldirectory nicht anlegbar: {e}"))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("Journaldirectory nicht anlegbar: {e}"))?;
     let final_path = journal_path_in(dir, &journal.operation_id);
     // Temp-Datei im selben Verzeichnis → atomares Rename auf demselben Volume.
     let tmp_path = dir.join(format!(".{}.tmp", journal.operation_id));
@@ -634,7 +651,12 @@ mod tests {
     }
 
     fn fresh_evidence() -> SwitchEvidence {
-        SwitchEvidence::new("op-rel".into(), SwitchDirection::CudaToCpu, "epoch-1".into(), 2)
+        SwitchEvidence::new(
+            "op-rel".into(),
+            SwitchDirection::CudaToCpu,
+            "epoch-1".into(),
+            2,
+        )
     }
 
     #[test]
@@ -642,11 +664,23 @@ mod tests {
         let mut receipt = GpuReceipt::from_smoke_probe(&fake_probe(&[4242]));
         let mut ev = fresh_evidence();
         // Erste Probe: PID weg → grün, aber noch nicht abgeschlossen (Pending).
-        let r1 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
-        assert!(matches!(r1, ReleaseOutcome::Pending), "erste Probe darf nicht freigegeben");
+        let r1 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Ok(fake_probe(&[]))
+        });
+        assert!(
+            matches!(r1, ReleaseOutcome::Pending),
+            "erste Probe darf nicht freigegeben"
+        );
         // Zweite grüne Probe → abgeschlossen + 0 MiB.
-        let r2 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
-        assert_eq!(r2, ReleaseOutcome::Released { attributable_mib: 0 });
+        let r2 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Ok(fake_probe(&[]))
+        });
+        assert_eq!(
+            r2,
+            ReleaseOutcome::Released {
+                attributable_mib: 0
+            }
+        );
         // Beide Proben sind im Journal aufgezeichnet (inhaltsfrei).
         assert_eq!(ev.vram_probes().len(), 2);
         assert!(ev.vram_probes().iter().all(|p| p.green));
@@ -657,15 +691,26 @@ mod tests {
         let mut receipt = GpuReceipt::from_smoke_probe(&fake_probe(&[4242]));
         let mut ev = fresh_evidence();
         // PID noch aktiv → rote Probe, Serie zurückgesetzt.
-        let r1 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[4242])));
+        let r1 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Ok(fake_probe(&[4242]))
+        });
         assert!(matches!(r1, ReleaseOutcome::ProbeError(_)));
         assert_eq!(ev.vram_probes().len(), 1);
         assert!(!ev.vram_probes()[0].green);
         assert_eq!(ev.vram_probes()[0].active_pids, vec![4242]);
         // Danach zwei grüne Proben → Freigabe.
-        run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
-        let r3 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
-        assert_eq!(r3, ReleaseOutcome::Released { attributable_mib: 0 });
+        run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Ok(fake_probe(&[]))
+        });
+        let r3 = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Ok(fake_probe(&[]))
+        });
+        assert_eq!(
+            r3,
+            ReleaseOutcome::Released {
+                attributable_mib: 0
+            }
+        );
     }
 
     #[test]
@@ -673,12 +718,9 @@ mod tests {
         let mut receipt = GpuReceipt::from_smoke_probe(&fake_probe(&[4242]));
         let mut ev = fresh_evidence();
         // NVML schlägt fehl → ProbeError, keine Freigabe.
-        let r = run_release_verification(
-            &mut receipt,
-            &mut ev,
-            Duration::ZERO,
-            || Err(GpuEvidenceError::NoDevice),
-        );
+        let r = run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Err(GpuEvidenceError::NoDevice)
+        });
         assert!(matches!(r, ReleaseOutcome::ProbeError(_)));
         // Keine Probe wurde aufgezeichnet (die Abfrage selbst fehlgeschlagen).
         assert_eq!(ev.vram_probes().len(), 0);
@@ -689,9 +731,13 @@ mod tests {
         let mut receipt = GpuReceipt::from_smoke_probe(&fake_probe(&[4242]));
         let mut ev = fresh_evidence();
         // Erste Probe (immer erlaubt) → grün, nicht abgeschlossen.
-        run_release_verification(&mut receipt, &mut ev, Duration::from_secs(1), || Ok(fake_probe(&[])));
+        run_release_verification(&mut receipt, &mut ev, Duration::from_secs(1), || {
+            Ok(fake_probe(&[]))
+        });
         // Direkt danach: Mindestabstand noch nicht erreicht → ProbeError.
-        let r2 = run_release_verification(&mut receipt, &mut ev, Duration::from_secs(1), || Ok(fake_probe(&[])));
+        let r2 = run_release_verification(&mut receipt, &mut ev, Duration::from_secs(1), || {
+            Ok(fake_probe(&[]))
+        });
         assert!(matches!(r2, ReleaseOutcome::ProbeError(_)));
     }
 
@@ -700,7 +746,12 @@ mod tests {
     #[test]
     fn full_lifecycle_schreibt_lesbares_journal() {
         let op_id = "op-lifecycle-test";
-        let mut ev = SwitchEvidence::new(op_id.into(), SwitchDirection::CudaToCpu, "epoch-1".into(), 2);
+        let mut ev = SwitchEvidence::new(
+            op_id.into(),
+            SwitchDirection::CudaToCpu,
+            "epoch-1".into(),
+            2,
+        );
         // Phasen wie im Actor (B6): Drain → BackendEnd → VramCheck.
         ev.begin_phase(PhaseName::Drain);
         ev.set_process_end_confirmed();
@@ -708,13 +759,24 @@ mod tests {
         ev.begin_phase(PhaseName::VramCheck);
         // Zwei grüne Proben gegen das Receipt (fake NVML, kein CUDA nötig).
         let mut receipt = GpuReceipt::from_smoke_probe(&fake_probe(&[4242]));
-        run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[])));
-        assert_eq!(run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(fake_probe(&[]))), ReleaseOutcome::Released { attributable_mib: 0 });
+        run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || {
+            Ok(fake_probe(&[]))
+        });
+        assert_eq!(
+            run_release_verification(&mut receipt, &mut ev, Duration::ZERO, || Ok(
+                fake_probe(&[])
+            )),
+            ReleaseOutcome::Released {
+                attributable_mib: 0
+            }
+        );
         // Terminal abschließen → Journal atomar geschrieben.
         // JFW-12 Block (h): Journal-Lifecycle gegen ein Temp-Verzeichnis — kein
         // Test-Artefakt in den echten App-Daten (%LOCALAPPDATA%).
         let dir = temp_dir("full-lifecycle");
-        let path = ev.finish_in(&dir, SwitchResult::Success).expect("Journal schreibbar");
+        let path = ev
+            .finish_in(&dir, SwitchResult::Success)
+            .expect("Journal schreibbar");
         assert!(path.exists(), "Journal-Datei muss existieren");
         // Zurücklesen und prüfen (Recovery-Hinweis, Spec C).
         let j = read_journal_in(&dir, op_id).expect("Journal muss lesbar sein");
@@ -753,18 +815,28 @@ mod tests {
     #[test]
     fn journal_io_temp_roundtrip_und_auflistung() {
         let dir = temp_dir("journal-io");
-        let mut ev = SwitchEvidence::new("op-temp-1".into(), SwitchDirection::CudaToCpu, "epoch-1".into(), 2);
+        let mut ev = SwitchEvidence::new(
+            "op-temp-1".into(),
+            SwitchDirection::CudaToCpu,
+            "epoch-1".into(),
+            2,
+        );
         ev.begin_phase(PhaseName::Drain);
         ev.set_job_tree_terminated();
         ev.set_process_end_confirmed();
-        let path = ev.finish_in(&dir, SwitchResult::Success).expect("Journal schreibbar");
+        let path = ev
+            .finish_in(&dir, SwitchResult::Success)
+            .expect("Journal schreibbar");
         assert!(path.exists());
 
         // read/list sind an dieselbe SwitchJournal-Ablage gebunden (Spec C).
         let j = read_journal_in(&dir, "op-temp-1").expect("Journal lesbar");
         assert_eq!(j.operation_id, "op-temp-1");
         assert!(j.job_tree_terminated && j.process_end_confirmed);
-        assert!(j.terminal_at_ms.is_some(), "terminale Operation ist nicht unvollständig");
+        assert!(
+            j.terminal_at_ms.is_some(),
+            "terminale Operation ist nicht unvollständig"
+        );
         assert!(read_journal_in(&dir, "gibts-nicht").is_none());
 
         // Nur *.json wird aufgelistet (kein Fremd-Müll im Verzeichnis).
@@ -795,7 +867,10 @@ mod tests {
         write_journal_in(&dir, &open).expect("Crash-Journal schreibbar");
         let j = read_journal_in(&dir, "op-crash").expect("lesbar");
         // Genau diese Bedingung nutzt der Recovery-Scan beim App-Start (Spec C/E).
-        assert!(j.terminal_at_ms.is_none(), "unvollständige Operation muss erkennbar sein");
+        assert!(
+            j.terminal_at_ms.is_none(),
+            "unvollständige Operation muss erkennbar sein"
+        );
         let listed = list_journals_in(&dir);
         assert_eq!(listed.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);

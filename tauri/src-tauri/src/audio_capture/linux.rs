@@ -106,10 +106,7 @@ pub async fn start_capture(
         // as the default input source for this process.
         let monitor_source = find_monitor_source_via_pactl();
         if let Some(ref source_name) = monitor_source {
-            eprintln!(
-                "Linux audio capture: Setting PULSE_SOURCE={}",
-                source_name
-            );
+            eprintln!("Linux audio capture: Setting PULSE_SOURCE={}", source_name);
             std::env::set_var("PULSE_SOURCE", source_name);
         }
 
